@@ -4,8 +4,8 @@
 # 全部在 CPU 上跑,不调用任何付费 API。Bluesky 采集由 collect_incremental.sh 每 15 分钟负责,
 # 这里不重复。
 #
-# [MUST] 不做标注。判定门需要 LLM,选哪种算力是另一个决定;这里不能偷偷跑一个模型,
-# 否则每天的标签会来自一个没人审过的配置。
+# 标注交给 label_gpu.sh:只在 CLOQ 没在跑、且有空闲 GPU 时补跑判定门与主题,否则跳过,
+# 积压留到下一次。配置与 llm_v2c 一致,见该脚本。
 #
 # 环境变量:
 #   SKIP_NVD=1    跳过 NVD 富化(测试用)
@@ -40,6 +40,9 @@ if [ "${SKIP_NVD:-0}" != 1 ]; then
   step "NVD enrichment (max 45 min)"
   timeout 45m $PY scripts/enrich_cves.py --min-posts 5 || echo "nvd enrichment stopped (timeout or error), continuing"
 fi
+
+step "labelling on GPU (skipped if CLOQ is running)"
+scripts/label_gpu.sh || echo "labelling failed, see logs/label_gpu.log"
 
 step "export public snapshot"
 if ! timeout 20m $PY scripts/export_portal_snapshot.py --public --out outputs/portal_public/data.json; then
