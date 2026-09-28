@@ -100,6 +100,16 @@ def write_public_page(dst: pathlib.Path) -> None:
     if "claude" in src.lower().replace("ccint", ""):
         raise SystemExit("公开版页面仍含私有功能代码,检查 private 标记")
     dst.write_text(src)
+    # 独立静态站(GitHub Pages 等):补上 artifact 平台原本自动包裹的文档骨架。
+    # noindex:匿名快照可以给人看,但不需要被搜索引擎收录。
+    site = dst.parent / "site"
+    site.mkdir(exist_ok=True)
+    head = ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
+            '<meta name="robots" content="noindex,nofollow">'
+            '<style>:root{color-scheme:light}body{margin:0}img{max-width:100%}'
+            '[hidden]{display:none!important}</style></head><body>')
+    (site / "index.html").write_text(head + src + "</body></html>")
 
 
 def main():
@@ -305,6 +315,8 @@ def main():
     path.write_text(json.dumps(clean(out), ensure_ascii=False, separators=(",", ":")))
     if a.public:
         write_public_page(path.parent / "signal_desk.html")
+        import shutil
+        shutil.copy(path, path.parent / "site" / "data.json")
     print(f"wrote {path} ({path.stat().st_size/1e6:.2f} MB): {len(posts)} relevant posts, "
           f"{len(cve_top)} CVEs, {len(events)} CA ransomware events; "
           f"topic window {w_start}..{w_end}, cve window {c_start}..{c_end}")
