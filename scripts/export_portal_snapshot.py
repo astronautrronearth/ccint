@@ -47,11 +47,68 @@ def clean(o):
     return iso(o)
 
 
+# 公开版保留名字的账号类型:画像为机构、媒体、情报 feed、推广号的账号。
+# 个人与未画像账号一律匿名 —— 未画像不等于机构。
+KEEP_FUNCTIONS = {"news_media", "incident_feed", "org_other", "promotion"}
+
+
+def anonymise(out: dict, salt_dir: pathlib.Path) -> dict:
+    """公开快照:个人账号换成稳定的匿名编号,去掉带 handle 的原帖链接。
+
+    [MUST] 盐只存本机(outputs/ 不进仓)。盐若公开,任何人都能对已知 handle
+    逐个求哈希反查,匿名就失效了。
+    """
+    import hashlib
+    import secrets
+    sp = ROOT / salt_dir / ".anon_salt"
+    sp.parent.mkdir(parents=True, exist_ok=True)
+    if not sp.exists():
+        sp.write_text(secrets.token_hex(16))
+    salt = sp.read_text().strip()
+    keep = {p["handle"] for p in out["posts"] if p.get("actor") in KEEP_FUNCTIONS}
+
+    def alias(h):
+        if not h or h in keep:
+            return h
+        return "user-" + hashlib.sha256((salt + h).encode()).hexdigest()[:6]
+
+    def scrub(p):
+        if p.get("src") != "bluesky" or p.get("handle") in keep:
+            return p
+        return {**p, "handle": alias(p.get("handle")), "url": None}
+
+    out["posts"] = [scrub(p) for p in out["posts"]]
+    for c in out["cves"]:
+        c["mentions"] = [scrub(m) for m in c["mentions"]]
+    for e in out["ransomware_events"]:
+        e["posts"] = [scrub(p) for p in e["posts"]]
+    out["topic_concentration"] = {t: [[alias(h), n] for h, n in hs]
+                                  for t, hs in out["topic_concentration"].items()}
+    out["meta"]["public"] = True
+    return out
+
+
+def write_public_page(dst: pathlib.Path) -> None:
+    """公开版页面:删掉 <!--private--> 与 /*private*/ 标记之间的内容(分析助手、爬取队列)。
+
+    删除而不是隐藏:公开版不声明对应能力,留着这些代码只是死代码。
+    """
+    import re
+    src = (ROOT / "src/ccint/portal/artifact/signal_desk.html").read_text()
+    src = re.sub(r"<!--private-->.*?<!--/private-->\n?", "", src, flags=re.S)
+    src = re.sub(r"/\*private\*/.*?/\*/private\*/\n?", "", src, flags=re.S)
+    if "claude" in src.lower().replace("ccint", ""):
+        raise SystemExit("公开版页面仍含私有功能代码,检查 private 标记")
+    dst.write_text(src)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="outputs/portal_artifact/data.json")
     ap.add_argument("--window", type=int, default=14)
     ap.add_argument("--top-cves", type=int, default=200)
+    ap.add_argument("--public", action="store_true",
+                    help="公开版:个人/未画像账号匿名化并去掉其原帖链接")
     a = ap.parse_args()
     W = a.window
 
@@ -241,9 +298,13 @@ def main():
         "ransomware_events": events,
         "sources": sources, "runs": runs,
     }
+    if a.public:
+        out = anonymise(out, pathlib.Path(a.out).parent)
     path = ROOT / a.out
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(clean(out), ensure_ascii=False, separators=(",", ":")))
+    if a.public:
+        write_public_page(path.parent / "signal_desk.html")
     print(f"wrote {path} ({path.stat().st_size/1e6:.2f} MB): {len(posts)} relevant posts, "
           f"{len(cve_top)} CVEs, {len(events)} CA ransomware events; "
           f"topic window {w_start}..{w_end}, cve window {c_start}..{c_end}")

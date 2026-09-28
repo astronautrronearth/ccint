@@ -203,7 +203,9 @@ pre.yaml{font:.78rem/1.5 var(--f-mono);background:var(--sunken);padding:12px;bor
     <a href="#cves" data-v="cves">CVEs &amp; OSINT</a>
     <a href="#ransomware" data-v="ransomware">Ransomware registry</a>
     <a href="#sources" data-v="sources">Sources &amp; crawling</a>
+<!--private-->
     <a href="#ask" data-v="ask">Ask the analyst</a>
+<!--/private-->
   </nav>
 </header>
 
@@ -297,7 +299,8 @@ pre.yaml{font:.78rem/1.5 var(--f-mono);background:var(--sunken);padding:12px;bor
       <div class="legend"><span><i class="sw" style="background:var(--ok)"></i>all runs succeeded</span><span><i class="sw" style="background:var(--med)"></i>some runs failed</span><span><i class="sw" style="background:var(--crit)"></i>all failed</span><span><i class="sw" style="background:var(--sunken)"></i>no run</span></div></div>
     <div id="health" style="display:grid;gap:10px"></div>
   </div>
-  <div class="split">
+<!--private-->
+  <div class="split" id="srcSubmit">
     <div class="panel">
       <div class="panel-h"><h2>Add a forum to crawl</h2></div>
       <form id="srcForm" class="formgrid" novalidate>
@@ -326,8 +329,10 @@ pre.yaml{font:.78rem/1.5 var(--f-mono);background:var(--sunken);padding:12px;bor
       </div>
     </div>
   </div>
+<!--/private-->
 </section>
 
+<!--private-->
 <!-- ASK -->
 <section class="view" id="v-ask" hidden>
   <div class="panel chat">
@@ -347,6 +352,7 @@ pre.yaml{font:.78rem/1.5 var(--f-mono);background:var(--sunken);padding:12px;bor
     </div>
   </div>
 </section>
+<!--/private-->
 </main>
 </div>
 <div id="tip" hidden></div>
@@ -377,7 +383,7 @@ const hideTip = () => tip.hidden = true;
 /* ---------- routing ---------- */
 const VIEWS = ["latest","topics","cves","ransomware","sources","ask"];
 function route(){ const v = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "latest";
-  VIEWS.forEach(k => { $("#v-"+k).hidden = k !== v; });
+  VIEWS.forEach(k => { const el = $("#v-"+k); if (el) el.hidden = k !== v; });
   document.querySelectorAll("nav.tabs a").forEach(a => a.setAttribute("aria-current", a.dataset.v === v ? "page" : "false"));
   if (v === "topics" && D) drawTopics(); }
 addEventListener("hashchange", route);
@@ -404,7 +410,11 @@ function boot(){
     const conc = (D.topic_concentration[t] || [])[0];
     return {t, cur, prev, authors, feed: fs[1] ? fs[0] / fs[1] : 0, top: conc};
   }).sort((a, b) => b.cur - a.cur);
-  renderLatest(); renderCves(); renderRansomware(); renderSources(); setupAsk();
+  if (m.public) {                      // 公开只读版:无分析助手、无爬取队列
+    VIEWS.splice(VIEWS.indexOf("ask"), 1);
+    document.querySelector('nav.tabs a[data-v="ask"]')?.remove(); $("#v-ask")?.remove(); $("#srcSubmit")?.remove();
+  }
+  renderLatest(); renderCves(); renderRansomware(); renderSources(); if (!m.public) setupAsk();
   route();
 }
 
@@ -601,8 +611,9 @@ function renderSources(){
       return `<i class="${ok===all?"s":ok?"p":"f"}" title="${d}: ${all} runs, ${ok} succeeded, ${ins} new posts"></i>`; }).join("");
     return `<div style="display:grid;grid-template-columns:130px 1fr;gap:10px;align-items:center"><span class="small" style="font-weight:600">${esc(sname(s))}</span><div class="strip">${cells}</div></div>`; }).join("") +
     `<div style="display:grid;grid-template-columns:130px 1fr;gap:10px"><span></span><div class="small muted mono" style="display:flex;justify-content:space-between"><span>${dlab(days[0])}</span><span>${dlab(days[days.length-1])}</span></div></div>`;
-  setupSourceForm();
+  if (!D.meta.public) setupSourceForm();
 }
+/*private*/
 const slug = s => (s || "").toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 40) || "new_source";
 function yamlFor(){ const n = $("#sf-name").value, k = $("#sf-kind").value, u = $("#sf-url").value, a = $("#sf-auth").value;
   const q = s => `"${String(s).replace(/\\/g,"\\\\").replace(/"/g,'\\"')}"`;
@@ -639,6 +650,8 @@ function setupSourceForm(){
   })();
 }
 
+/*/private*/
+/*private*/
 /* ---------- ASK ---------- */
 function setupAsk(){
   const SUG = ["What were the main Canadian cyber topics in the last 14 days, and how many authors drove each?",
@@ -719,6 +732,7 @@ Answer in the language the user writes in. Be concise: short paragraphs or bulle
   box.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } });
   box.addEventListener("input", () => { box.style.height = "auto"; box.style.height = Math.min(160, box.scrollHeight) + "px"; });
 }
+/*/private*/
 route();
 })();
 </script>
