@@ -38,7 +38,8 @@ def _mod(name, path):
 SC = _mod("scale", "scripts/www_scale.py")
 D0 = date(2026, 8, 22)
 DAYS = [D0 + timedelta(i) for i in range(33)]
-HIST, EVAL = set(DAYS[:7]), set(DAYS[19:])
+HIST = set(DAYS[:7])
+EVAL = {d for d in DAYS[19:] if d <= date(2026, 9, 21)}  # P_scale has no roots after 2026-09-21 (DEVIATIONS.md)
 SUFFIX = r"\b(inc|incorporated|llc|l\.l\.c|ltd|limited|corp|corporation|co|company|gmbh|ag|sa|sas|plc|bv|nv|srl|spa|pty|lp|llp|pc|group|holdings?)\b"
 POL = ["Q1_posts", "Q2_authors", "Q3_dedup", "Q4_capped", "Q5_nofeed"]
 rng = np.random.default_rng(20261108)

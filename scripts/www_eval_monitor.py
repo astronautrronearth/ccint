@@ -34,7 +34,10 @@ def _mod(name, path):
 SC = _mod("scale", "scripts/www_scale.py")
 D0 = date(2026, 8, 22)
 DAYS = [D0 + timedelta(i) for i in range(33)]
-HIST, DEV, EVAL = DAYS[:7], DAYS[7:19], DAYS[19:]
+HIST, DEV = DAYS[:7], DAYS[7:19]
+# the P_scale manifest has no roots after 2026-09-21 (rules_v2 labels ended there when it was frozen), so the
+# PREREG's evaluation days 20-33 reduce to the 12 days 2026-09-10..21 (recorded in DEVIATIONS.md)
+EVAL = [d for d in DAYS[19:] if d <= date(2026, 9, 21)]
 POLICIES = ["P1_posts", "P2_edges", "P3_authors", "P4_responders", "P5_dedup", "P6_capped", "P7_nofeed",
             "P8_nonself_edges", "P9_oracle"]
 rng = np.random.default_rng(20261106)
@@ -95,13 +98,20 @@ def select_value(cells, topics, d, pol, k, n_orders=100):
 def evaluate(cells, topics, days, k):
     per_day = {p: np.array([select_value(cells, topics, d, p, k) for d in days]) for p in POLICIES}
     out = {}
-    base = per_day["P1_posts"]
+    base, edges = per_day["P1_posts"], per_day["P2_edges"]
+    idx = [rng.integers(0, len(days), len(days)) for _ in range(2000)]
     for p, v in per_day.items():
-        diff = v - base
-        bs = [diff[rng.integers(0, len(days), len(days))].sum() for _ in range(2000)]
+        diff, de = v - base, v - edges
+        bs = [diff[i].sum() for i in idx]
+        # relative gain bootstrapped as a ratio of resampled totals (not absolute CI / fixed baseline)
+        br = [v[i].sum() / base[i].sum() - 1 for i in idx if base[i].sum() > 0]
+        be = [de[i].sum() for i in idx]
         out[p] = {"total": round(float(v.sum()), 1), "vs_posts": round(float(diff.sum()), 1),
                   "vs_posts_ci": [round(float(np.percentile(bs, 2.5)), 1), round(float(np.percentile(bs, 97.5)), 1)],
                   "vs_posts_rel": round(float(diff.sum() / base.sum()), 4) if base.sum() else None,
+                  "vs_posts_rel_ci": [round(float(np.percentile(br, 2.5)), 4), round(float(np.percentile(br, 97.5)), 4)],
+                  "vs_edges": round(float(de.sum()), 1),
+                  "vs_edges_ci": [round(float(np.percentile(be, 2.5)), 1), round(float(np.percentile(be, 97.5)), 1)],
                   "per_day": [round(float(x), 2) for x in v]}
     out["days_with_target"] = int(sum(any(cells.get((t, d), {}).get("target", 0) > 0 for t in topics) for d in days))
     return out
@@ -192,6 +202,38 @@ def main():
                      "reps": reps}
         print(how, supp[how], flush=True)
     out["E_E_suppression_k3"] = supp
+
+    # E-C2 (added after the blind review; not in the PREREG): the actual selection policies when only a uniform
+    # sample of each day's roots has its neighbourhood collected. Scores use the sampled roots only; the target is
+    # always computed on all roots.
+    by_cell = defaultdict(list)
+    for s in seeds:
+        by_cell[(info[s]["topic"], info[s]["published_at"].date())].append(s)
+    ec2 = {}
+    r2 = np.random.default_rng(20261109)
+    for frac in (0.10, 0.25, 0.50):
+        res = {"P2_edges": [], "P4_responders": []}
+        for _ in range(100):
+            cc = {}
+            for key, L in by_cell.items():
+                n = max(1, int(round(frac * len(L))))
+                S = [L[i] for i in r2.choice(len(L), size=n, replace=False)]
+                c = cut(key[1])
+                resp, ne = set(), 0
+                for s in S:
+                    for e in edges_by[s]:
+                        if e["event_created_at"] is not None and e["event_created_at"] < c:
+                            ne += 1
+                            if e["source_actor_id"] != info[s]["author_id"]:
+                                resp.add(e["source_actor_id"])
+                cc[key] = dict(cells[key], P2_edges=ne, P4_responders=len(resp))
+            for pol in res:
+                res[pol].append(sum(select_value(cc, topics_all, d, pol, 3, 10) for d in EVAL))
+        ec2[f"frac{int(frac * 100)}"] = {pol: {"mean": round(float(np.mean(v)), 1),
+                                              "p95": [round(float(np.percentile(v, 2.5)), 1), round(float(np.percentile(v, 97.5)), 1)]}
+                                        for pol, v in res.items()}
+        print("E-C2", frac, ec2[f"frac{int(frac * 100)}"], flush=True)
+    out["E_C2_partial_policy_k3"] = ec2
     p = Path("outputs/interaction_experiment/www_eval/monitor.json")
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(out, indent=1))
