@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 sys.path[:0] = ["src"]
 from ccint.collectors.bluesky import BlueskyCollector  # noqa: E402
+from ccint import db  # noqa: E402
 from ccint.ingest import run_collection  # noqa: E402
 
 # One term per team (city added where the nickname is an ordinary word), plus the league.
@@ -40,7 +41,11 @@ def main():
     with ContrastCollector(NBA_TERMS, query_version="nba_v1", lang="en") as col:
         res = run_collection(col, mode="backfill", since=since, until=until, max_pages_per_term=a.pages,
                              chunk_days=1)
-    print(res)
+    # RawPost.source_key is a module constant in the Bluesky collector; restamp this run's new rows
+    with db.transaction() as c:
+        n = c.execute("UPDATE posts SET source_key = %s WHERE first_seen_run = %s AND source_key = 'bluesky'",
+                      (ContrastCollector.source_key, res["run_id"])).rowcount
+    print(res, "restamped", n)
 
 
 if __name__ == "__main__":
