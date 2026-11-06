@@ -38,8 +38,8 @@ BINS = [(1, 1), (2, 2), (3, 4), (5, 9), (10, 19), (20, 49), (50, 10 ** 9)]
 
 
 def rank_of(counts, topics):
-    order = sorted(topics, key=lambda t: (-counts.get(t, 0), t))
-    return {t: i for i, t in enumerate(order, 1)}
+    """Competition ranks: ties share the better rank (matches the paper's Table 1)."""
+    return {t: 1 + sum(counts.get(u, 0) > counts.get(t, 0) for u in topics) for t in topics}
 
 
 # ---------------------------------------------------------------- E1
@@ -241,6 +241,7 @@ def self_mechanism(seeds, info, edges):
     out["delay_minutes"]["all"] = {"median": round(float(np.median(alld)), 1),
                                    "share_le_10min": round(float(np.mean(np.array(alld) <= 10)), 4)}
     out["seeds_with_self_response"] = len(resp_seeds)
+    out["delays_minutes"] = {c: [round(x, 3) for x in v] for c, v in delay.items()}  # for Figure 2
     return out
 
 
