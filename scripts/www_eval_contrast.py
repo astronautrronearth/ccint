@@ -100,7 +100,7 @@ def domain(name, ids, runs, unit_of):
            "monitor": {}}
     for k in (1, 3, 5):
         r = MON.evaluate(cells, units, EVAL, k)
-        out["monitor"][f"k{k}"] = {p: {kk: v[kk] for kk in ("total", "vs_posts", "vs_posts_ci", "vs_posts_rel")}
+        out["monitor"][f"k{k}"] = {p: {kk: v[kk] for kk in ("total", "vs_posts", "vs_posts_ci", "vs_posts_rel", "vs_posts_rel_ci", "vs_edges", "vs_edges_ci")}
                                    for p, v in r.items() if isinstance(v, dict)}
         out["monitor"][f"k{k}"]["days_with_target"] = r["days_with_target"]
     print(name, {kk: out[kk] for kk in ("n_roots", "units_ge30", "rho_posts_accounts", "rho_posts_neff", "self_share_24h",
