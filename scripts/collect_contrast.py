@@ -1,6 +1,6 @@
 """Contrast-domain collection for the WWW evaluation (PREREG: www2027/results/frozen_eval/PREREG.md).
 
-    python scripts/collect_contrast.py --since 2026-10-21 --until 2026-11-05
+    python scripts/collect_contrast.py --since 2026-10-21 --until 2026-11-05 [--domain nba|crypto|ai]
 
 Collects Bluesky posts for a non-security domain (NBA basketball) into the same `posts` table under a
 separate source_key (`bluesky_nba`) and query_version (`nba_v1`), so the cybersecurity corpus and its
@@ -26,6 +26,13 @@ NBA_TERMS = [
 ]
 
 
+CRYPTO_TERMS = ["bitcoin", "ethereum", "crypto", "solana", "dogecoin", "XRP", "stablecoin", "memecoin", "altcoin",
+                "DeFi", "NFT", "Binance", "Coinbase"]
+AI_TERMS = ["ChatGPT", "OpenAI", "LLM", "generative AI", "Anthropic", "Claude AI", "Gemini AI", "AI model",
+            "machine learning", "Copilot", "deepfake", "AI agent", "Hugging Face"]
+DOMAINS = {"nba": (NBA_TERMS, "nba_v1"), "crypto": (CRYPTO_TERMS, "crypto_v1"), "ai": (AI_TERMS, "ai_v1")}
+
+
 class ContrastCollector(BlueskyCollector):
     source_key = "bluesky_nba"
 
@@ -35,10 +42,13 @@ def main():
     ap.add_argument("--since", required=True)
     ap.add_argument("--until", required=True)
     ap.add_argument("--pages", type=int, default=3)
+    ap.add_argument("--domain", default="nba", choices=sorted(DOMAINS))
     a = ap.parse_args()
+    terms, qv = DOMAINS[a.domain]
+    ContrastCollector.source_key = f"bluesky_{a.domain}"
     since = datetime.fromisoformat(a.since).replace(tzinfo=timezone.utc)
     until = datetime.fromisoformat(a.until).replace(tzinfo=timezone.utc)
-    with ContrastCollector(NBA_TERMS, query_version="nba_v1", lang="en") as col:
+    with ContrastCollector(terms, query_version=qv, lang="en") as col:
         res = run_collection(col, mode="backfill", since=since, until=until, max_pages_per_term=a.pages,
                              chunk_days=1)
     # RawPost.source_key is a module constant in the Bluesky collector; restamp this run's new rows
