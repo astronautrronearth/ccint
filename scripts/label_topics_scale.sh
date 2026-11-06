@@ -8,6 +8,8 @@ exec >>"$LOG_DIR/label_topics_scale.log" 2>&1
 PORT=8011
 MODEL=Qwen/Qwen3-4B-Instruct-2507; REV=cdbee75f17c01a7cc42f958dc650907174af0554
 VLLM=/home/xinyu/miniconda3/envs/cloq/bin/vllm
+export PATH=/home/xinyu/miniconda3/envs/cloq/bin:$PATH   # flashinfer JIT needs ninja
+export VLLM_USE_FLASHINFER_SAMPLER=0   # its JIT build fails here; decoding is greedy (temperature 0), so output is unaffected
 GPU=${GPU:-1}
 echo "=== $(date -u +%FT%TZ) start on GPU $GPU"
 CUDA_VISIBLE_DEVICES=$GPU setsid "$VLLM" serve $MODEL --revision $REV --served-model-name user \

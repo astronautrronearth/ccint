@@ -44,19 +44,27 @@ Answer with one word: yes, no or unclear."""
 
 
 def ask(client, model, text, country):
-    body = {"model": model, "max_tokens": 5, "temperature": 0, "stream": False,
+    # Anthropic messages endpoint on the relay. claude-sonnet-5-5 rejects `temperature`, so it runs at its
+    # default; Haiku keeps temperature 0 (deviation from PREREG, recorded in the frozen README).
+    body = {"model": model, "max_tokens": 16,
             "messages": [{"role": "user", "content": PROMPT.format(c=NICE[country], t=text[:3000])}]}
+    if "haiku" in model:
+        body["temperature"] = 0
+    last = "error"
     for attempt in range(5):
         try:
-            r = client.post(os.environ["RELAY_BASE_URL"] + "/chat/completions", json=body,
-                            headers={"Authorization": "Bearer " + os.environ["RELAY_API_KEY"]}, timeout=120)
+            r = client.post(os.environ["RELAY_BASE_URL"] + "/messages", json=body, timeout=120,
+                            headers={"x-api-key": os.environ["RELAY_API_KEY"], "anthropic-version": "2023-06-01"})
             r.raise_for_status()
-            a = r.json()["choices"][0]["message"]["content"].strip().lower()
+            a = "".join(b.get("text", "") for b in r.json()["content"]).strip().lower()
             m = re.match(r"(yes|no|unclear)", a)
-            return m.group(1) if m else "invalid:" + a[:20]
+            if m:
+                return m.group(1)
+            last = "invalid:" + a[:20]   # e.g. a bare "ok" seen under concurrency; ask again
         except Exception:  # noqa: BLE001
-            time.sleep(2 ** attempt)
-    return "error"
+            last = "error"
+        time.sleep(2 ** attempt)
+    return last
 
 
 def kappa(a, b):
@@ -78,7 +86,7 @@ def main() -> None:
     rng = random.Random(SEED)
     items = [(k, p) for k in COUNTRIES for p in rng.sample(by[k], min(PER, len(by[k])))]
     OUT.mkdir(parents=True, exist_ok=True)
-    with httpx.Client() as client, ThreadPoolExecutor(8) as pool:
+    with httpx.Client() as client, ThreadPoolExecutor(4) as pool:
         lab = {role: list(pool.map(lambda kp: ask(client, m, txt[kp[1]], kp[0]), items)) for role, m in MODELS.items()}
     with open(OUT / "labels.csv", "w", newline="") as fh:
         w = csv.writer(fh)
@@ -96,7 +104,8 @@ def main() -> None:
                                 "agreement": round(sum(a == b for a, b in zip(ref, sec)) / len(ref), 4)}
     allr, alls = lab["reference"], lab["second"]
     dec = [a for a in allr if a in ("yes", "no")]
-    summ["overall"] = {"n": len(allr), "precision_reference": round(dec.count("yes") / len(dec), 4),
+    summ["overall"] = {"n": len(allr), "precision_reference": round(dec.count("yes") / len(dec), 4) if dec else None,
+                       "errors": sum(a == "error" for a in allr + alls),
                        "agreement": round(sum(a == b for a, b in zip(allr, alls)) / len(allr), 4),
                        "kappa": round(kappa(allr, alls), 4)}
     (OUT / "summary.json").write_text(json.dumps(summ, indent=1))
