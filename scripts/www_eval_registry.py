@@ -124,7 +124,7 @@ def main():
                             got[e] = d
         pub = {e[0]: e[2] for e in regn}
         delay = [(got[e] - pub[e]).days for e in got]
-        return {"claims": len(got), "median_delay_days": float(np.median(delay)) if delay else None,
+        return {"claims": len(got), "claim_ids": sorted(got), "median_delay_days": float(np.median(delay)) if delay else None,
                 "claims_by_country": dict(Counter(dict((e[0], e[3]) for e in regn)[e] for e in got))}
 
     out = {"n_posts_with_victim": sum(bool(v["victims"]) for v in vic), "n_clusters": len(clusters),
@@ -137,7 +137,20 @@ def main():
         out[f"claims_with_cluster_in_eval_{tag}"] = len(set().union(*[M[use_fuzzy][k] for k in clusters if first[k] in EVAL] or [set()]))
         for b in (1, 5, 10):
             out["results"][f"{tag}_b{b}"] = {p: simulate(p, b, use_fuzzy) for p in POL}
-            print(tag, b, {p: v["claims"] for p, v in out["results"][f"{tag}_b{b}"].items()}, flush=True)
+            R = out["results"][f"{tag}_b{b}"]
+            # paired comparison against Q1, bootstrap over registry publication days
+            pub = {e[0]: e[2] for e in regn}
+            days_pub = sorted({pub[e] for p in POL for e in R[p]["claim_ids"]})
+            for p in POL:
+                if p == "Q1_posts":
+                    continue
+                a = Counter(pub[e] for e in R[p]["claim_ids"])
+                q = Counter(pub[e] for e in R["Q1_posts"]["claim_ids"])
+                diff = np.array([a[d] - q[d] for d in days_pub], float)
+                bs = [diff[rng.integers(0, len(diff), len(diff))].sum() for _ in range(2000)] if len(diff) else [0]
+                R[p]["vs_Q1"] = int(diff.sum())
+                R[p]["vs_Q1_ci"] = [float(np.percentile(bs, 2.5)), float(np.percentile(bs, 97.5))]
+            print(tag, b, {p: (v["claims"], v.get("vs_Q1_ci")) for p, v in R.items()}, flush=True)
     # fuzzy-only matches for blind human adjudication (names only; no policy information)
     rows = sorted({(k, e[1], e[0]) for k in clusters for e in regn
                    if e[0] in M[True][k] and e[0] not in M[False][k]})
