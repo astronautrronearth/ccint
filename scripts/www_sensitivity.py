@@ -26,6 +26,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, "src")
+sys.path.insert(0, "scripts")
 spec = importlib.util.spec_from_file_location("desc", "scripts/interaction_descriptive.py")
 desc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(desc)
@@ -192,6 +193,10 @@ def audit(adir, pops, ps, info, beh, vol):
     out["feed"] = res
     hfeed = {a for a, v in human.items() if v == "feed"}
     out["main_with_human_feeds"] = summary(pops["main"], ps, info, hfeed)
+    from strict_canada_filter import strict_canada
+    with db.connect() as c:
+        txt = {r["post_id"]: r["text"] for r in c.execute("SELECT post_id, text FROM posts WHERE post_id = ANY(%s)", (pops["main"],))}
+    out["strict_canada_with_human_feeds"] = summary([s for s in pops["main"] if strict_canada(txt[s])], ps, info, hfeed)
     out["main_with_human_feeds_or_unclear"] = summary(pops["main"], ps, info,
                                                       hfeed | {a for a, v in human.items() if v == "unclear"})
     return out
@@ -215,6 +220,15 @@ def main() -> None:
         "feeds_volume_only": summary(M, ps, info, vol),
         "feeds_behavioral_no_partial": summary([s for s in M if s not in partial], ps, info, beh),
     }
+    # replication on the strict Canada subset (scripts/strict_canada_filter.py; decided 2026-11-05)
+    from strict_canada_filter import strict_canada
+    with db.connect() as c:
+        txt = {r["post_id"]: r["text"] for r in c.execute("SELECT post_id, text FROM posts WHERE post_id = ANY(%s)", (M,))}
+    SC = [s for s in M if strict_canada(txt[s])]
+    res["strict_canada_n"] = len(SC)
+    res["variants"].update({"strict_canada": summary(SC, ps, info),
+                            "strict_canada_feeds_behavioral": summary(SC, ps, info, beh),
+                            "strict_canada_feeds_volume_only": summary(SC, ps, info, vol)})
     # rank changes (Q7): feed removal on post rank; self removal on interaction rank; both
     base, fb, fv = res["variants"]["main"]["topics"], res["variants"]["feeds_behavioral"]["topics"], \
         res["variants"]["feeds_volume_only"]["topics"]
