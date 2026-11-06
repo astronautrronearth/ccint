@@ -186,6 +186,10 @@ def stratum(seeds, info, edges_by, feeds, cross, participants, topic_key, name="
         ks = [v["cross_edges"]["k_star"] for v in br.values() if v.get("cross_edges")]
         out["breakdown_cross_le2"] = sum(k is not None and k <= 2 for k in ks)
         out["breakdown_cross_topics"] = len(ks)
+        # topics that can fall two places (drop_needed == 2); the count above also includes near-bottom topics
+        k2 = [v["cross_edges"]["k_star"] for v in br.values() if v.get("cross_edges") and v["cross_edges"]["drop_needed"] == 2]
+        out["breakdown_cross_two_le2"] = sum(k is not None and k <= 2 for k in k2)
+        out["breakdown_cross_two_topics"] = len(k2)
     return out
 
 
