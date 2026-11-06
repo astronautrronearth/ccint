@@ -15,6 +15,7 @@ import argparse
 import csv
 import importlib.util
 import json
+import zlib
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -42,7 +43,7 @@ E = _mod("exp", "scripts/www_experiments.py")
 OK = {"success", "partial"}
 B = 1000
 rng = np.random.default_rng(20261106)
-MIN_N = 300
+MIN_N = 30   # PREREG: strata < 300 seeds are reported (computed) but not interpreted
 
 
 def scale_runs(sha):
@@ -134,7 +135,11 @@ def dispersion_boot(seeds, topic, author, feed, cross):
     return round(float(point), 4), [round(float(x), 4) for x in np.nanpercentile(bs, [2.5, 97.5])]
 
 
-def stratum(seeds, info, edges_by, feeds, cross, participants, topic_key):
+def stratum(seeds, info, edges_by, feeds, cross, participants, topic_key, name=""):
+    # per-stratum random streams, so a stratum's intervals do not depend on which strata ran before it
+    global rng
+    rng = np.random.default_rng([20261106, zlib.crc32(f"{name}|{topic_key}".encode())])
+    E.rng = np.random.default_rng([20261107, zlib.crc32(f"{name}|{topic_key}".encode())])
     topic = {s: info[s][topic_key] for s in seeds}
     author = {s: info[s]["author_id"] for s in seeds}
     out = {"n": len(seeds), "accounts": len(set(author.values()))}
@@ -220,9 +225,9 @@ def main() -> None:
            "feeds_accounts": {k: len(v) for k, v in feeds.items()}, "rules_vs_human": rules_vs_human,
            "strata": {}, "strata_rules_topic": {}}
     for k, L in strata.items():
-        out["strata"][k] = stratum(L, info, edges_by, feeds, cross, participants, "topic")
+        out["strata"][k] = stratum(L, info, edges_by, feeds, cross, participants, "topic", name=k)
         print(k, len(L), flush=True)
-    out["strata_rules_topic"]["all"] = stratum(seeds, info, edges_by, feeds, cross, participants, "rules_topic")
+    out["strata_rules_topic"]["all"] = stratum(seeds, info, edges_by, feeds, cross, participants, "rules_topic", name="all")
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text(json.dumps(out, indent=1, default=str))
     print("wrote", a.out)
