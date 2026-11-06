@@ -41,7 +41,7 @@ DAYS = [D0 + timedelta(i) for i in range(33)]
 HIST, EVAL = set(DAYS[:7]), set(DAYS[19:])
 SUFFIX = r"\b(inc|incorporated|llc|l\.l\.c|ltd|limited|corp|corporation|co|company|gmbh|ag|sa|sas|plc|bv|nv|srl|spa|pty|lp|llp|pc|group|holdings?)\b"
 POL = ["Q1_posts", "Q2_authors", "Q3_dedup", "Q4_capped", "Q5_nofeed"]
-rng = np.random.default_rng(20261106)
+rng = np.random.default_rng(20261108)
 
 
 def norm(x: str) -> str:
@@ -82,7 +82,7 @@ def main():
         s = v["post_id"]
         if s not in info or not v["victims"]:
             continue
-        for name in {norm(x) for x in v["victims"]}:
+        for name in sorted({norm(x) for x in v["victims"]}):
             if len(name) >= 3:
                 clusters[name].append(s)
     first = {k: min(info[s]["published_at"].date() for s in L) for k, L in clusters.items()}
@@ -111,21 +111,30 @@ def main():
             return sum(min(v, 3) for v in Counter(info[s]["author_id"] for s in L).values())
         return sum(info[s]["author_id"] not in feeds for s in L)
 
+    pub = {e[0]: e[2] for e in regn}
+    REPS = 50
+
     def simulate(pol, b, use_fuzzy):
-        reviewed, got, delay = set(), {}, []
-        for d in DAYS[7:]:
-            pool = [k for k in clusters if first[k] <= d and k not in reviewed]
-            sc = {k: score(k, d, pol) + rng.random() * 1e-6 for k in pool}
-            for k in sorted(pool, key=lambda k: -sc[k])[:b]:
-                reviewed.add(k)
-                if d in EVAL:
-                    for e in M[use_fuzzy][k]:
-                        if e not in got:
-                            got[e] = d
-        pub = {e[0]: e[2] for e in regn}
-        delay = [(got[e] - pub[e]).days for e in got]
-        return {"claims": len(got), "claim_ids": sorted(got), "median_delay_days": float(np.median(delay)) if delay else None,
-                "claims_by_country": dict(Counter(dict((e[0], e[3]) for e in regn)[e] for e in got))}
+        """Mean over REPS random tie-breaking orders (pool sorted first, so order does not depend on hashing)."""
+        r = np.random.default_rng([20261106, POL.index(pol), b, int(use_fuzzy)])
+        per_day, totals, delays = Counter(), [], []
+        for _ in range(REPS):
+            reviewed, got = set(), {}
+            for d in DAYS[7:]:
+                pool = sorted(k for k in clusters if first[k] <= d and k not in reviewed)
+                jit = r.random(len(pool)) * 1e-6
+                sc = {k: score(k, d, pol) + jit[i] for i, k in enumerate(pool)}
+                for k in sorted(pool, key=lambda k: -sc[k])[:b]:
+                    reviewed.add(k)
+                    if d in EVAL:
+                        for e in sorted(M[use_fuzzy][k]):
+                            got.setdefault(e, d)
+            totals.append(len(got))
+            delays += [(got[e] - pub[e]).days for e in got]
+            for e in got:
+                per_day[pub[e]] += 1 / REPS
+        return {"claims": round(float(np.mean(totals)), 2), "claims_95_ties": [float(np.percentile(totals, 2.5)), float(np.percentile(totals, 97.5))],
+                "median_delay_days": float(np.median(delays)) if delays else None, "per_pubday": per_day}
 
     out = {"n_posts_with_victim": sum(bool(v["victims"]) for v in vic), "n_clusters": len(clusters),
            "n_registry": len(regn), "registry_countries": dict(Counter(e[3] for e in regn)),
@@ -138,19 +147,55 @@ def main():
         for b in (1, 5, 10):
             out["results"][f"{tag}_b{b}"] = {p: simulate(p, b, use_fuzzy) for p in POL}
             R = out["results"][f"{tag}_b{b}"]
-            # paired comparison against Q1, bootstrap over registry publication days
-            pub = {e[0]: e[2] for e in regn}
-            days_pub = sorted({pub[e] for p in POL for e in R[p]["claim_ids"]})
+            # paired comparison against Q1 on expected per-day counts, bootstrap over registry publication days
+            days_pub = sorted(set().union(*[set(R[p]["per_pubday"]) for p in POL]))
             for p in POL:
-                if p == "Q1_posts":
-                    continue
-                a = Counter(pub[e] for e in R[p]["claim_ids"])
-                q = Counter(pub[e] for e in R["Q1_posts"]["claim_ids"])
-                diff = np.array([a[d] - q[d] for d in days_pub], float)
-                bs = [diff[rng.integers(0, len(diff), len(diff))].sum() for _ in range(2000)] if len(diff) else [0]
-                R[p]["vs_Q1"] = int(diff.sum())
-                R[p]["vs_Q1_ci"] = [float(np.percentile(bs, 2.5)), float(np.percentile(bs, 97.5))]
-            print(tag, b, {p: (v["claims"], v.get("vs_Q1_ci")) for p, v in R.items()}, flush=True)
+                if p != "Q1_posts":
+                    diff = np.array([R[p]["per_pubday"].get(d, 0) - R["Q1_posts"]["per_pubday"].get(d, 0) for d in days_pub])
+                    bs = [diff[rng.integers(0, len(diff), len(diff))].sum() for _ in range(2000)]
+                    R[p]["vs_Q1"] = round(float(diff.sum()), 2)
+                    R[p]["vs_Q1_ci"] = [round(float(np.percentile(bs, 2.5)), 2), round(float(np.percentile(bs, 97.5)), 2)]
+            for p in POL:
+                R[p]["per_pubday"] = {str(d): round(v, 3) for d, v in R[p]["per_pubday"].items()}
+            print(tag, b, {p: (v["claims"], v.get("vs_Q1"), v.get("vs_Q1_ci")) for p, v in R.items()}, flush=True)
+
+    # E-E on E-B (PREREG E-E outcome "E-B registry coverage"): remove exactly B mention posts, where B is the number
+    # of history-rule feed posts among the candidate posts, then rank by Q1 (posts) with b = 5, exact matching.
+    allposts = sorted({s for L in clusters.values() for s in L})
+    B = sum(info[s]["author_id"] in feeds for s in allposts)
+
+    def q1_after(keep, reps=20):
+        r = np.random.default_rng([20261107, len(keep)])
+        kept = {k: [s for s in L if s in keep] for k, L in clusters.items()}
+        fk = {k: min(info[s]["published_at"].date() for s in v) for k, v in kept.items() if v}
+        tot = []
+        for _ in range(reps):
+            reviewed, got = set(), set()
+            for d in DAYS[7:]:
+                pool = sorted(k for k in fk if fk[k] <= d and k not in reviewed)
+                jit = r.random(len(pool)) * 1e-6
+                sc = {k: sum(info[s]["published_at"].date() <= d for s in kept[k]) + jit[i] for i, k in enumerate(pool)}
+                for k in sorted(pool, key=lambda k: -sc[k])[:5]:
+                    reviewed.add(k)
+                    if d in EVAL:
+                        got |= M[False][k]
+            tot.append(len(got))
+        return round(float(np.mean(tot)), 2)
+    cnt = Counter(info[s]["author_id"] for s in allposts)
+    top, n = set(), 0
+    for a_, _ in cnt.most_common():
+        for s in allposts:
+            if info[s]["author_id"] == a_ and n < B:
+                top.add(s)
+                n += 1
+        if n >= B:
+            break
+    rand = [q1_after(set(allposts) - set(rng.choice(allposts, size=B, replace=False)), reps=5) for _ in range(40)]
+    out["E_E_on_registry_b5"] = {"B": B, "n_posts": len(allposts), "none": q1_after(set(allposts)),
+                                 "feed_removal": q1_after({s for s in allposts if info[s]["author_id"] not in feeds}),
+                                 "top_output": q1_after(set(allposts) - top),
+                                 "random_mean": float(np.mean(rand)), "random_95": [float(np.percentile(rand, 2.5)), float(np.percentile(rand, 97.5))]}
+    print("E-E on registry", out["E_E_on_registry_b5"], flush=True)
     # fuzzy-only matches for blind human adjudication (names only; no policy information)
     rows = sorted({(k, e[1], e[0]) for k in clusters for e in regn
                    if e[0] in M[True][k] and e[0] not in M[False][k]})

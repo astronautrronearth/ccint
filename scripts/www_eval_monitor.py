@@ -80,7 +80,8 @@ def build(seeds, info, edges_by, text_hash, feeds_hist):
 
 
 def select_value(cells, topics, d, pol, k, n_orders=100):
-    """Expected target of the top-k topics under random tie-breaking."""
+    """Expected target of the top-k topics under random tie-breaking (own seeded stream per call: stable)."""
+    rng = np.random.default_rng([20261106, POLICIES.index(pol), k, d.toordinal()])
     sc = np.array([cells.get((t, d), {}).get(pol, 0) for t in topics], float)
     tg = np.array([cells.get((t, d), {}).get("target", 0) for t in topics], float)
     vals = []
