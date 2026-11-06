@@ -1,0 +1,8 @@
+{
+ "manifest_version": "www_scale",
+ "frozen_at": "2026-11-06T09:18:28.962306+00:00",
+ "git_commit": "c7053d00af7269005875ba7230f5ce6db54f4eae",
+ "definition": "rules_v2.is_cyber AND lang en* AND text non-empty AND bluesky AND 2026-08-22 <= published_at < 2026-09-24",
+ "n": 59867,
+ "sha256": "f2b1de15be245790dd2c4a03d2d26906dea599463c6bad0aa7914f528141c3e8"
+}
