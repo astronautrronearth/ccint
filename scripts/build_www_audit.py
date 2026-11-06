@@ -9,7 +9,7 @@
    account with >= 3 main seeds, and 40 random other accounts. Each card shows the handle, profile link,
    activity counts and up to 5 of the account's posts in the corpus. Labels: role (6 classes, as in
    ANNOTATION_GUIDELINES.md) and feed / non-feed / unclear.
-Both annotators (A, B) label every item independently; key.csv (system flags) is never shown.
+A labels every item; B labels a reliability subset (Canada 60, feed 25 per stratum), independently; key.csv (system flags) is never shown.
 Output contains post text and handles: it stays out of the public ccint repo (outputs/ is gitignored).
 """
 from __future__ import annotations
@@ -94,9 +94,20 @@ def url(u, handle):
 def write(dirn, title, instr, items, questions, key_rows, meta):
     d = OUT / dirn
     d.mkdir(parents=True, exist_ok=True)
-    for who in ("A", "B"):
-        (d / f"annotate_{who}.html").write_text(page(f"{title} - annotator {who}", instr, items, questions,
+    # A labels every item (primary labels). B labels a reliability subset only (decided 2026-11-05):
+    # Canada 60 random items; feed 25 per stratum. Separate RNG so A's page and item ids never change.
+    sub = random.Random(RNG + 1)
+    if dirn == "canada":
+        keep = set(sub.sample([it["id"] for it in items], 60))
+    else:
+        keep = set()
+        for strat in ("flagged", "unflagged_3plus", "random_rest"):
+            keep |= set(sub.sample([k["item_id"] for k in key_rows if k["stratum"] == strat], 25))
+    b_items = [it for it in items if it["id"] in keep]
+    for who, its in (("A", items), ("B", b_items)):
+        (d / f"annotate_{who}.html").write_text(page(f"{title} - annotator {who}", instr, its, questions,
                                                      f"www_{dirn}_{who}"))
+    meta = {**meta, "B_subset": sorted(keep), "B_n": len(keep)}
     with open(d / "items.csv", "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["item_id", "text"])

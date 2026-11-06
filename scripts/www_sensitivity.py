@@ -3,7 +3,7 @@ the human-label versions (§6).
 
     python scripts/www_sensitivity.py                      → outputs/interaction_experiment/www_gonogo/sensitivity.json
     python scripts/www_sensitivity.py --audit outputs/www_audit
-        reads canada/A.csv, canada/B.csv, feed/A.csv, feed/B.csv (CSV exports of the annotation pages)
+        reads canada/A.csv, feed/A.csv (primary, all items), optional B.csv (reliability subset) and adjudicated.csv
         and adds: Canada precision (Wilson CI), feed-rule accuracy, kappa, and the main statistics with
         human feed labels (accounts not in the audit, all with < 3 seeds and unflagged, count as non-feed).
 
@@ -154,36 +154,53 @@ def read_export(p):
     return {r["item_id"]: r for r in csv.DictReader(open(p))}
 
 
+def labels(adir, task, field):
+    """Primary labels = annotator A on every item; B on a reliability subset. If adjudicated.csv exists
+    (item_id,<field>) it overrides A on the items it lists (disagreements resolved after kappa)."""
+    A, B = read_export(adir / f"{task}/A.csv"), {}
+    if (adir / f"{task}/B.csv").exists():
+        B = read_export(adir / f"{task}/B.csv")
+    prim = {i: r[field] for i, r in A.items() if r.get(field)}
+    adj = adir / f"{task}/adjudicated.csv"
+    n_adj = 0
+    if adj.exists():
+        for i, r in read_export(adj).items():
+            if r.get(field):
+                prim[i] = r[field]
+                n_adj += 1
+    both = [i for i in A if A[i].get(field) and B.get(i, {}).get(field)]
+    a, b = [A[i][field] for i in both], [B[i][field] for i in both]
+    rel = {"double_coded": len(both), "raw_agreement": round(float(np.mean([x == y for x, y in zip(a, b)])), 3) if both else None,
+           "kappa": kappa(a, b) if both else None,
+           "disagreements": [i for i, x, y in zip(both, a, b) if x != y], "adjudicated_items": n_adj}
+    return prim, rel, A, B, both
+
+
 def audit(adir, pops, ps, info, beh, vol):
     out = {}
-    # Canada
+    # Canada: precision of the llm_v2d filter = share of yes among decided primary labels
+    prim, rel, *_ = labels(adir, "canada", "canada_cyber")
+    c = Counter(prim.values())
+    dec = c["yes"] + c["no"]
+    out["canada"] = {"n_primary": len(prim), "counts": dict(c), "unclear_rate": round(c["unclear"] / len(prim), 4),
+                     "precision": round(c["yes"] / dec, 4) if dec else None, "precision_ci": wilson(c["yes"], dec),
+                     "reliability": rel}
+    from strict_canada_filter import strict_canada
     key = {r["item_id"]: r for r in csv.DictReader(open(adir / "canada/key.csv"))}
-    A, B = read_export(adir / "canada/A.csv"), read_export(adir / "canada/B.csv")
-    both = [i for i in key if A.get(i, {}).get("canada_cyber") and B.get(i, {}).get("canada_cyber")]
-    a = [A[i]["canada_cyber"] for i in both]
-    b = [B[i]["canada_cyber"] for i in both]
-    agreed = [x for x, y in zip(a, b) if x == y]
-    yes = sum(x == "yes" for x in agreed)
-    decided = sum(x in ("yes", "no") for x in agreed)
-    out["canada"] = {"n_labelled_by_both": len(both), "raw_agreement": round(float(np.mean([x == y for x, y in zip(a, b)])), 3),
-                     "kappa": kappa(a, b), "agreed": len(agreed), "agreed_unclear": sum(x == "unclear" for x in agreed),
-                     "precision_agreed_decided": round(yes / decided, 4) if decided else None,
-                     "precision_ci": wilson(yes, decided),
-                     "precision_A_only": round(sum(x == "yes" for x in a) / max(1, sum(x != "unclear" for x in a)), 4)}
+    with db.connect() as cn:
+        txt = {r["post_id"]: r["text"] for r in cn.execute("SELECT post_id, text FROM posts WHERE post_id = ANY(%s)",
+                                                         ([int(key[i]["post_id"]) for i in prim],))}
+    cm = Counter((strict_canada(txt[int(key[i]["post_id"])]), v) for i, v in prim.items() if v != "unclear")
+    tp, fp, fn = cm[(True, "yes")], cm[(True, "no")], cm[(False, "yes")]
+    out["canada"]["strict_filter"] = {"precision": round(tp / (tp + fp), 4) if tp + fp else None,
+                                      "precision_ci": wilson(tp, tp + fp), "recall": round(tp / (tp + fn), 4) if tp + fn else None,
+                                      "tp": tp, "fp": fp, "fn": fn}
     # Feed
+    prim, rel, A, B, both = labels(adir, "feed", "feed")
     key = {r["item_id"]: r for r in csv.DictReader(open(adir / "feed/key.csv"))}
-    A, B = read_export(adir / "feed/A.csv"), read_export(adir / "feed/B.csv")
-    both = [i for i in key if A.get(i, {}).get("feed") and B.get(i, {}).get("feed")]
-    a = [A[i]["feed"] for i in both]
-    b = [B[i]["feed"] for i in both]
-    human = {}
-    for i in both:
-        if A[i]["feed"] == B[i]["feed"]:
-            human[key[i]["author_id"]] = A[i]["feed"]
-    res = {"n_labelled_by_both": len(both), "raw_agreement": round(float(np.mean([x == y for x, y in zip(a, b)])), 3),
-           "kappa_feed": kappa(a, b),
-           "kappa_role": kappa([A[i].get("role", "") for i in both], [B[i].get("role", "") for i in both]),
-           "agreed": len(human), "agreed_unclear": sum(v == "unclear" for v in human.values()), "rules": {}}
+    rel["kappa_role"] = kappa([A[i].get("role", "") for i in both], [B[i].get("role", "") for i in both]) if both else None
+    human = {key[i]["author_id"]: v for i, v in prim.items()}
+    res = {"n_primary": len(human), "counts": dict(Counter(human.values())), "reliability": rel, "rules": {}}
     for name, F in (("behavioral_v1", beh), ("volume_only", vol)):
         cm = Counter((int(aid in F), v) for aid, v in human.items())
         tp, fp, fn = cm[(1, "feed")], cm[(1, "non_feed")], cm[(0, "feed")]
@@ -193,9 +210,8 @@ def audit(adir, pops, ps, info, beh, vol):
     out["feed"] = res
     hfeed = {a for a, v in human.items() if v == "feed"}
     out["main_with_human_feeds"] = summary(pops["main"], ps, info, hfeed)
-    from strict_canada_filter import strict_canada
-    with db.connect() as c:
-        txt = {r["post_id"]: r["text"] for r in c.execute("SELECT post_id, text FROM posts WHERE post_id = ANY(%s)", (pops["main"],))}
+    with db.connect() as cn:
+        txt = {r["post_id"]: r["text"] for r in cn.execute("SELECT post_id, text FROM posts WHERE post_id = ANY(%s)", (pops["main"],))}
     out["strict_canada_with_human_feeds"] = summary([s for s in pops["main"] if strict_canada(txt[s])], ps, info, hfeed)
     out["main_with_human_feeds_or_unclear"] = summary(pops["main"], ps, info,
                                                       hfeed | {a for a, v in human.items() if v == "unclear"})
