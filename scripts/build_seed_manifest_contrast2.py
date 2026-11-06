@@ -40,6 +40,11 @@ def main() -> None:
     import random
     nba = [r for r in rows if r["source_key"] == "bluesky_crypto" and not r["is_cyber"] and r["post_uri"]]
     cyb = [r for r in rows if r["source_key"] == "bluesky_ai" and not r["is_cyber"] and r["post_uri"]]
+    # a post matching both domains' terms was inserted under both sources; it belongs to neither (DEVIATIONS.md)
+    from collections import Counter
+    uc = Counter(r["post_uri"] for r in nba + cyb)
+    nba = [r for r in nba if uc[r["post_uri"]] == 1]
+    cyb = [r for r in cyb if uc[r["post_uri"]] == 1]
     rnd = random.Random(20261106)
     pick = {r["post_id"]: "crypto" for r in rnd.sample(nba, min(N_EACH, len(nba)))}
     pick.update({r["post_id"]: "ai" for r in rnd.sample(cyb, min(N_EACH, len(cyb)))})
