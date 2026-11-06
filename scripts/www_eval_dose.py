@@ -130,8 +130,8 @@ def contrast_units():
         out[dom] = {"n": res["n_roots"], "C": C, "accounts_per_neff": ratio, "units_used": nu,
                     "gain_edges": k["P2_edges"]["vs_posts_rel"], "gain_edges_ci": k["P2_edges"]["vs_posts_rel_ci"],
                     "gain_resp": k["P4_responders"]["vs_posts_rel"], "posts_total": k["P1_posts"]["total"],
-                    "detail": {kk: res[kk] for kk in ("rho_posts_accounts", "rho_posts_neff", "self_share_24h",
-                                                      "continuation_share", "incidence_24h")}}
+                    "detail": {kk: res[kk] for kk in ("rho_posts_accounts", "rho_posts_neff", "self_share_48h",
+                                                      "continuation_share", "incidence_48h")}}
         print(dom, out[dom], flush=True)
     return out
 

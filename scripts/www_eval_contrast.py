@@ -3,7 +3,8 @@
     python scripts/www_eval_contrast.py → outputs/interaction_experiment/www_eval/contrast.json
 
 Units: NBA = the matched search term (team or league; a post matching several terms belongs to each);
-cybersecurity = topic_v2s topic. Only edges within 24 h of the root are used in both domains.
+cybersecurity = topic_v2s topic. Only edges within 48 h of the root are used in both domains (covers the target window, which ends 24 h after
+the day-end cutoff; the first version used 24 h, corrected after the second blind review).
 Days 2026-10-21..2026-11-04: first 3 history, next 4 development, last 8 evaluation. Deviation: the
 volume-only feed rule (>= 5 posts on >= 4 days) cannot be met in 3 history days; here >= 5 posts on all
 3 history days.
@@ -56,7 +57,7 @@ def domain(name, ids, runs, unit_of):
     for e in edges:
         s = e["seed_post_id"]
         if s in info and e["edge_type"] in ("reply", "quote") and e["event_created_at"] is not None \
-                and (e["event_created_at"] - info[s]["published_at"]).total_seconds() <= 86400:
+                and (e["event_created_at"] - info[s]["published_at"]).total_seconds() <= 2 * 86400:
             eb[s].append(e)
     with db.connect() as c:
         th = {r["post_id"]: r["text_hash"] for r in c.execute("SELECT post_id, text_hash FROM posts WHERE post_id = ANY(%s)", (seeds,))}
@@ -90,21 +91,22 @@ def domain(name, ids, runs, unit_of):
             hist_days[info[s]["author_id"]].add(d)
     feeds = {a for a, n in hist_posts.items() if n >= 5 and len(hist_days[a]) >= 3}
     cells, _ = MON.build(pairs, pinfo, peb, pth, feeds)
+    MON.add_persistent(cells, DEV)
     out = {"domain": name, "n_roots": len(seeds), "n_units": len(units), "units_ge30": len(big),
            "rho_posts_accounts": round(float(spearmanr([conc[u]["posts"] for u in big], [conc[u]["authors"] for u in big]).statistic), 3),
            "rho_posts_neff": round(float(spearmanr([conc[u]["posts"] for u in big], [conc[u]["N_eff"] for u in big]).statistic), 3),
            "top1_share_median": round(float(np.median([max(Counter(pinfo[k]["author_id"] for k in pairs if k[1] == u).values()) / conc[u]["posts"] for u in big])), 3),
-           "edges_24h": tot, "self_share_24h": round(self_ / tot, 4) if tot else None,
+           "edges_48h": tot, "self_share_48h": round(self_ / tot, 4) if tot else None,
            "continuation_share": mech["shares"].get("continuation"), "feeds_hist": len(feeds),
-           "incidence_24h": round(float(np.mean([any(e["source_actor_id"] != info[s]["author_id"] for e in eb[s]) for s in seeds])), 4),
+           "incidence_48h": round(float(np.mean([any(e["source_actor_id"] != info[s]["author_id"] for e in eb[s]) for s in seeds])), 4),
            "monitor": {}}
     for k in (1, 3, 5):
         r = MON.evaluate(cells, units, EVAL, k)
         out["monitor"][f"k{k}"] = {p: {kk: v[kk] for kk in ("total", "vs_posts", "vs_posts_ci", "vs_posts_rel", "vs_posts_rel_ci", "vs_edges", "vs_edges_ci")}
                                    for p, v in r.items() if isinstance(v, dict)}
         out["monitor"][f"k{k}"]["days_with_target"] = r["days_with_target"]
-    print(name, {kk: out[kk] for kk in ("n_roots", "units_ge30", "rho_posts_accounts", "rho_posts_neff", "self_share_24h",
-                                         "continuation_share", "incidence_24h")}, flush=True)
+    print(name, {kk: out[kk] for kk in ("n_roots", "units_ge30", "rho_posts_accounts", "rho_posts_neff", "self_share_48h",
+                                         "continuation_share", "incidence_48h")}, flush=True)
     print(name, "k3", {p: (v["total"], v["vs_posts_rel"], v["vs_posts_ci"]) for p, v in out["monitor"]["k3"].items() if isinstance(v, dict)}, flush=True)
     return out
 

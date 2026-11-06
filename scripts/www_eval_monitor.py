@@ -39,7 +39,7 @@ HIST, DEV = DAYS[:7], DAYS[7:19]
 # PREREG's evaluation days 20-33 reduce to the 12 days 2026-09-10..21 (recorded in DEVIATIONS.md)
 EVAL = [d for d in DAYS[19:] if d <= date(2026, 9, 21)]
 POLICIES = ["P1_posts", "P2_edges", "P3_authors", "P4_responders", "P5_dedup", "P6_capped", "P7_nofeed",
-            "P8_nonself_edges", "P9_oracle"]
+            "P8_nonself_edges", "P9_oracle", "P10_persistent"]
 rng = np.random.default_rng(20261106)
 
 
@@ -82,6 +82,19 @@ def build(seeds, info, edges_by, text_hash, feeds_hist):
     return cells, by
 
 
+def add_persistent(cells, dev_days):
+    """P10 (added after the second blind review): rank topics by their mean target over the development days,
+    fixed for the evaluation days, i.e. persistent topic differences without any same-day information."""
+    dev = defaultdict(list)
+    for (t, d), v in cells.items():
+        if d in set(dev_days):
+            dev[t].append(v["target"])
+    mean = {t: float(np.mean(v)) for t, v in dev.items()}
+    for (t, d), v in cells.items():
+        v["P10_persistent"] = mean.get(t, 0.0)
+    return cells
+
+
 def select_value(cells, topics, d, pol, k, n_orders=100):
     """Expected target of the top-k topics under random tie-breaking (own seeded stream per call: stable)."""
     rng = np.random.default_rng([20261106, POLICIES.index(pol), k, d.toordinal()])
@@ -109,7 +122,8 @@ def evaluate(cells, topics, days, k):
         out[p] = {"total": round(float(v.sum()), 1), "vs_posts": round(float(diff.sum()), 1),
                   "vs_posts_ci": [round(float(np.percentile(bs, 2.5)), 1), round(float(np.percentile(bs, 97.5)), 1)],
                   "vs_posts_rel": round(float(diff.sum() / base.sum()), 4) if base.sum() else None,
-                  "vs_posts_rel_ci": [round(float(np.percentile(br, 2.5)), 4), round(float(np.percentile(br, 97.5)), 4)],
+                  "vs_posts_rel_ci": ([round(float(np.percentile(br, 2.5)), 4), round(float(np.percentile(br, 97.5)), 4)]
+                                      if br else [None, None]),
                   "vs_edges": round(float(de.sum()), 1),
                   "vs_edges_ci": [round(float(np.percentile(be, 2.5)), 1), round(float(np.percentile(be, 97.5)), 1)],
                   "per_day": [round(float(x), 2) for x in v]}
@@ -168,6 +182,7 @@ def main():
     hist_ids = [s for s in ids if info.get(s) and info[s]["published_at"].date() in set(HIST)]
     feeds_hist = SC.feed_rules(hist_ids, info)["volume_only"]
     cells, by = build(seeds, info, edges_by, text_hash, feeds_hist)
+    add_persistent(cells, DEV)
     topics_all = sorted({t for t, _ in cells})
     topics_na = [t for t in topics_all if t != "unassigned"]
     out = {"n_seeds": len(seeds), "topics": topics_all, "feeds_hist_accounts": len(feeds_hist),
