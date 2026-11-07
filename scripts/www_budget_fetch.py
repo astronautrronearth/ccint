@@ -2,9 +2,11 @@
 docs/revision/PAPER2_1107/{astra_tech,fable_tech}.md). Offline replay: all neighbourhoods are cached; a policy pays one
 unit per root post it "fetches" and only then sees that post's reply+quote edges created before the cutoff.
 
-Score model (fitted on development days only): ridge of log(1 + next-day new responders) on free features
-[log posts, log authors, burst z, log mean past yield] plus log(1 + E_t), E_t = the topic's engagement (edges before
-the cutoff). At decision time E_t is replaced by an estimate from the fetched posts.
+Score: the topic's engagement E_t (reply+quote edges before the cutoff), estimated from the fetched posts; unfetched
+topics use a free prior (ridge of log1p E on free features, development days). Reference points: the free ridge model
+of next-day yield (best free baseline, budget 0) and full fetch (rank by true E_t). [A first version ranked by a
+ridge of yield on free features + log E; it under-used E (full fetch no better than free) and was replaced before any
+held-out evaluation.]
 
 Policies at budget B = fraction of the day's posts:
   free        B = 0, E_t from the free prior (ridge of log1p E on free features)
@@ -48,6 +50,7 @@ def _mod(name, path):
 
 
 MECH = _mod("mech", "scripts/www_dose2_mech.py")
+FREE_MODEL = None
 MON = MECH.MON
 
 
@@ -201,7 +204,8 @@ def run_day(cells, d, score, prior, h, policy, B, rng, k=3, z=1.0):
         return max(0.0, m), se
 
     def q(t, Eh):
-        return score(C[t]["free"] + [np.log1p(max(0.0, Eh))])
+        # rank by the (estimated) engagement itself; the free score breaks ties only
+        return float(np.log1p(max(0.0, Eh))) + 1e-3 * score(C[t]["free"] + [0.0])
     used = 0
     if policy in ("uniform",):
         allp = [(t, i) for t in T for i in range(C[t]["V"])]
@@ -240,12 +244,28 @@ def run_day(cells, d, score, prior, h, policy, B, rng, k=3, z=1.0):
 
 
 def run_setting(name, S, EMBV, TYPES, seeds):
+    global FREE_MODEL
     cells = prepare(S, EMBV, TYPES)
     score, prior, h = fit_models(cells, S)
+    Xf, yf = [], []
+    for (t, d), c in cells.items():
+        if d in set(S["dev"]):
+            Xf.append(c["free"])
+            yf.append(np.log1p(len(c["T"])))
+    fm = ridge_fit(Xf, yf)
+    FREE_MODEL = lambda c: fm(c["free"])
     ev = list(S["eval"])
     Vday = {d: sum(c["V"] for (t, dd), c in cells.items() if dd == d) for d in ev}
     res = {"posts_eval": sum(Vday.values())}
     full_sel = {}
+    # free reference = the free ridge model on free features (best free baseline), not the E-prior
+    fr = {}
+    for d in ev:
+        T = [t for (t, dd) in cells if dd == d]
+        sc = {t: FREE_MODEL(cells[(t, d)]) for t in T}
+        sel = choose(sc, 3)
+        fr[d] = set(sel)
+    res["free_model"] = {"yield": float(sum(len(set().union(*[cells[(t, d)]["T"] for t in fr[d]])) for d in ev)), "cost": 0}
     for pol in ("free", "full"):
         rng = np.random.default_rng(1)
         y = 0.0
@@ -277,10 +297,11 @@ def run_setting(name, S, EMBV, TYPES, seeds):
                 cs.append(cc)
             res[pol][str(B)] = {"yield": float(np.mean(ys)), "yield_sd": float(np.std(ys)), "cost": float(np.mean(cs)),
                                 "overlap_with_full": float(np.mean(ov))}
-    gap = res["full"]["yield"] - res["free"]["yield"]
+    base = res["free_model"]["yield"]
+    gap = res["full"]["yield"] - base
     res["gap_full_minus_free"] = gap
     for pol in ("uniform", "stratified", "boundary", "boundary_cv"):
-        rec = {B: ((v["yield"] - res["free"]["yield"]) / gap if gap > 0 else None) for B, v in res[pol].items()}
+        rec = {B: ((v["yield"] - base) / gap if gap > 0 else None) for B, v in res[pol].items()}
         res[pol + "_recovered"] = rec
     print(name, {k: (v if not isinstance(v, dict) else {kk: (round(vv["yield"], 1) if isinstance(vv, dict) else vv) for kk, vv in v.items()})
                  for k, v in res.items() if not k.endswith("_recovered")}, flush=True)
