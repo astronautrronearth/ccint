@@ -17,4 +17,5 @@ echo "=== $(date -u +%FT%TZ) start all analyses"
 ./.venv/bin/python scripts/www_gap_days.py > logs/gap_days.log 2>&1
 ./.venv/bin/python scripts/www_hedge.py > logs/hedge.log 2>&1
 ./.venv/bin/python scripts/www_early.py > logs/early.log 2>&1
+./.venv/bin/python scripts/www_manipulation.py > logs/manipulation.log 2>&1
 echo "=== $(date -u +%FT%TZ) ALL ANALYSES DONE"
