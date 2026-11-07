@@ -132,6 +132,44 @@ def t3():
     return len(items), len(double)
 
 
+def t4():
+    """Domain precision: 50 random roots per contrast domain (NBA, crypto, AI), shuffled together; 50 double."""
+    from ccint.interaction import manifest as mf
+    out = Path("outputs/www_audit/domain")
+    out.mkdir(parents=True, exist_ok=True)
+    r4 = random.Random(20261107)
+    pick = []
+    for man, col, dom in (("www_contrast", "in_nba", "NBA basketball"), ("www_contrast2", "in_crypto", "cryptocurrency"),
+                          ("www_contrast2", "in_ai", "AI / large language models")):
+        ids = [int(r["post_id"]) for r in mf.load(man).population(col)]
+        pick += [(dom, s) for s in r4.sample(ids, 50)]
+    r4.shuffle(pick)
+    with db.connect() as c:
+        text = {r["post_id"]: r["text"] for r in c.execute("SELECT post_id, text FROM posts WHERE post_id = ANY(%s)",
+                                                           ([s for _, s in pick],))}
+    items, key = [], []
+    for i, (dom, s) in enumerate(pick, 1):
+        iid = f"D{i:03d}"
+        items.append({"id": iid, "html": f'<div class="sec">Domain to judge: <b>{html.escape(dom)}</b></div>'
+                                          f'<div class="post">{html.escape(text.get(s) or "")}</div>'})
+        key.append([iid, dom, s])
+    double = set(r[0] for r in r4.sample(key, 50))
+    fields = [["in_domain", "Is this post mainly about the domain shown above?", "radio", ["yes", "no", "unsure"]],
+              ["kind", "If yes: who is posting?", "radio", ["person discussing", "news / outlet", "automated feed or bot",
+                                                            "promotion / ad", "unsure"]]]
+    intro = "Judge from the text only. 'yes' = the post is mainly about the domain, not a passing mention. See ANNOTATION_PLAN.md, task T4."
+    page(out / "domain_A.html", "Domain precision audit, annotator A", intro, items, fields)
+    page(out / "domain_B.html", "Domain precision audit, annotator B", intro, [x for x in items if x["id"] in double], fields)
+    with open(out / "key.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["item_id", "domain", "post_id", "double"])
+        w.writerows([r + [r[0] in double] for r in key])
+    return len(items), len(double)
+
+
 if __name__ == "__main__":
-    print("T2", t2())
-    print("T3", t3())
+    if "t4" in sys.argv[1:]:
+        print("T4", t4())
+    else:
+        print("T2", t2())
+        print("T3", t3())
