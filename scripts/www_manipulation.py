@@ -47,8 +47,17 @@ def cells_of(S):
         c2 = c + timedelta(days=1)
         before, after, resp = set(), set(), Counter()
         ne = 0
+        conv = set()
         for s in R:
             a = S["info"][s]["author_id"]
+            pre = [e for e in S["eb"][s] if e["event_created_at"] is not None and e["event_created_at"] < c]
+            replied_to = {e["target_post_uri"] for e in pre if e.get("depth") == 2}
+            for e in pre:
+                if e["source_actor_id"] == a:
+                    continue
+                # a responder is in conversation if they replied to a reply, or their reply drew a reply
+                if e.get("depth") == 2 or (e.get("depth") == 1 and e["source_post_uri"] in replied_to):
+                    conv.add(e["source_actor_id"])
             for e in S["eb"][s]:
                 ts = e["event_created_at"]
                 if ts is None:
@@ -62,7 +71,7 @@ def cells_of(S):
                 elif ts < c2 and ext:
                     after.add(e["source_actor_id"])
         cells[(t, d)] = {"V": len(R), "A": len({S["info"][s]["author_id"] for s in R}), "E": ne, "resp": resp,
-                         "T": after - before}
+                         "T": after - before, "conv": conv}
     # established responders: accounts that replied to any unit of the setting on an earlier day (before d's start)
     first_seen = {}
     for (t, d), c in sorted(cells.items(), key=lambda kv: kv[0][1]):
@@ -96,6 +105,14 @@ def hill(counts, q):
     return float((p ** q).sum() ** (1 / (1 - q)))
 
 
+def conv_w(c, fake, fake_ids, w):
+    real_new = [j for j in c["resp"] if j not in c["prev_unit"]]
+    fk = [j for j in fake_ids if j not in c["prev_unit"]]
+    conv_n = sum(j in c["conv"] for j in real_new) + sum(j in c["conv"] for j in fk)
+    other_n = sum(j not in c["conv"] for j in real_new) + sum(j not in c["conv"] for j in fk) + len(fake)
+    return float(conv_n + w * other_n)
+
+
 def scores(c, fake, fake_est=None, fake_ids=None):
     """fake: reply counts of fake accounts that are new; fake_est: counts of fake accounts that are established
     (sleepers/pods); fake_ids: their ids (for new-to-unit filtering)."""
@@ -111,6 +128,11 @@ def scores(c, fake, fake_est=None, fake_ids=None):
             "eff_resp_D1": hill(counts, 1), "eff_resp_D2": hill(counts, 2),
             "est_resp": float(len(est)), "est_eff_D1": hill(est, 1),
             "new_unit_D1": hill(newu, 1), "new_unit_est_D1": hill(newu_est, 1),
+            # conversational responders: fake replies are depth-1 broadcasts that draw no reply, so they never count
+            "conv_resp": float(len(c["conv"] - set(fake_ids)) + len(set(fake_ids) & c["conv"])),
+            # conversation-verified count: conversational new-to-unit responders weigh 1, other new-to-unit responders w
+            "conv_w25": conv_w(c, fake, fake_ids, 0.25), "conv_w50": conv_w(c, fake, fake_ids, 0.5),
+            "conv_new_unit": float(len([j for j in c["conv"] if j not in c["prev_unit"]])),
             "authors": c["A"], "posts": c["V"], "oracle": len(c["T"])}
 
 
@@ -130,6 +152,8 @@ ATTACKS = {  # name: (kind, B accounts, R total fake replies); parameters from d
     "A6_sockpuppet_B3_R15": ("new", 3, 15),
     # A7 mobilised brigade (Kumar et al. WWW 2018): real low-activity accounts, 1-3 replies each
     "A7_brigade_B200_R400": ("sleeper_low", 200, 400),
+    # A8 adaptive: established accounts that also reply to each other (fake conversation); breaks conversation checks
+    "A8_fake_conversation_B100_R200": ("sleeper_conv", 100, 200),
 }
 
 
@@ -142,7 +166,7 @@ def run(S):
             ACT[j] += k
     ev = sorted(S["eval"])
     pols = ["edges", "responders", "eff_resp_D1", "eff_resp_D2", "est_resp", "est_eff_D1", "new_unit_D1",
-            "new_unit_est_D1", "authors", "posts", "oracle"]
+            "new_unit_est_D1", "conv_resp", "conv_new_unit", "conv_w25", "conv_w50", "authors", "posts", "oracle"]
     out = {}
     for name, (kind, B, R) in ATTACKS.items():
         rng = np.random.default_rng([20261107, B, R, len(kind)])
@@ -162,11 +186,11 @@ def run(S):
                 if kind == "new":
                     victim = low[rng.integers(len(low))]
                     fake = [max(1, R // B)] * B
-                elif kind in ("sleeper_low", "sleeper_high"):
+                elif kind in ("sleeper_low", "sleeper_high", "sleeper_conv"):
                     victim = low[rng.integers(len(low))]
                     pool = sorted(cells[(victim, d)]["pool"], key=lambda j: (ACT.get(j, 0), j))
                     half = len(pool) // 2
-                    pool = pool[:half] if kind == "sleeper_low" else pool[half:]
+                    pool = pool[:half] if kind == "sleeper_low" else pool[half:] if kind == "sleeper_high" else pool
                     if pool:
                         fids = list(rng.choice(pool, size=min(B, len(pool)), replace=False))
                         fest = [max(1, R // B)] * len(fids)
@@ -184,8 +208,15 @@ def run(S):
                     c = cells[(victim, d)]
                     c_prev = c["prev_unit"]
                     c["prev_unit"] = c_prev | pod_seen
+                if kind == "sleeper_conv" and victim is not None:
+                    cv = cells[(victim, d)]
+                    cv_conv = cv["conv"]
+                    cv["conv"] = cv_conv | set(fids)
+                    cv_resp = cv["resp"]
                 sc = {t: scores(cells[(t, d)], fake if t == victim else [], fest if t == victim else [],
                                 fids if t == victim else []) for t in T}
+                if kind == "sleeper_conv" and victim is not None:
+                    cv["conv"], cv["resp"] = cv_conv, cv_resp
                 if kind == "pod" and victim is not None:
                     cells[(victim, d)]["prev_unit"] = c_prev
                     pod_seen |= set(fids)
