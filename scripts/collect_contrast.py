@@ -30,7 +30,22 @@ CRYPTO_TERMS = ["bitcoin", "ethereum", "crypto", "solana", "dogecoin", "XRP", "s
                 "DeFi", "NFT", "Binance", "Coinbase"]
 AI_TERMS = ["ChatGPT", "OpenAI", "LLM", "generative AI", "Anthropic", "Claude AI", "Gemini AI", "AI model",
             "machine learning", "Copilot", "deepfake", "AI agent", "Hugging Face"]
-DOMAINS = {"nba": (NBA_TERMS, "nba_v1"), "crypto": (CRYPTO_TERMS, "crypto_v1"), "ai": (AI_TERMS, "ai_v1")}
+# PREREG_DOSE2 (2026-11-07): six further domains, same frame
+CLIMATE_TERMS = ["climate change", "global warming", "carbon emissions", "renewable energy", "solar power", "wind power",
+                 "net zero", "fossil fuels", "COP31", "climate crisis", "electric vehicle", "heat pump", "wildfire"]
+FILM_TERMS = ["box office", "Netflix", "HBO", "Disney+", "Marvel", "official trailer", "film review", "Oscars",
+              "season finale", "showrunner", "Letterboxd", "movie theater", "Rotten Tomatoes"]
+GAMES_TERMS = ["PlayStation", "Xbox", "Nintendo Switch", "Steam Deck", "video game", "indie game", "speedrun",
+               "Elden Ring", "GTA 6", "Minecraft", "Fortnite", "esports", "game review"]
+SOCCER_TERMS = ["Premier League", "Champions League", "Arsenal", "Liverpool FC", "Manchester United", "Man City",
+                "Chelsea FC", "Tottenham", "La Liga", "Bundesliga", "Serie A", "MLS", "Real Madrid"]
+SPACE_TERMS = ["NASA", "SpaceX", "Starship", "ISS", "astronomy", "telescope", "James Webb", "exoplanet", "rocket launch",
+               "Artemis", "Mars rover", "Blue Origin", "aurora"]
+STOCKS_TERMS = ["stock market", "S&P 500", "Nasdaq", "Dow Jones", "earnings call", "stocks", "Federal Reserve",
+                "interest rates", "inflation", "Tesla stock", "Nvidia stock", "IPO", "dividend"]
+DOMAINS = {"nba": (NBA_TERMS, "nba_v1"), "crypto": (CRYPTO_TERMS, "crypto_v1"), "ai": (AI_TERMS, "ai_v1"),
+           "climate": (CLIMATE_TERMS, "climate_v1"), "film": (FILM_TERMS, "film_v1"), "games": (GAMES_TERMS, "games_v1"),
+           "soccer": (SOCCER_TERMS, "soccer_v1"), "space": (SPACE_TERMS, "space_v1"), "stocks": (STOCKS_TERMS, "stocks_v1")}
 
 
 class ContrastCollector(BlueskyCollector):
