@@ -116,7 +116,7 @@ def main(known_only):
                                 np.log1p(c["P2_edges"]) - np.log1p(c[f"H{gstar}"]), conv.get((t, d))))
         # E4 top-k boundary discordance on history+development days
         pre = list(s["hist"]) + list(s["dev"])
-        shares = []
+        shares, sharesA, day_of = [], [], []
         for d in pre:
             T = sorted([t for t in topics if (t, d) in cells], key=lambda t: -cells[(t, d)]["P1_posts"])[:6]
             if len(T) < 2:
@@ -128,14 +128,33 @@ def main(known_only):
                 neff[t] = 1 / sum((v / n) ** 2 for v in cnt.values())
             pairs = [(a, b) for i, a in enumerate(T) for b in T[i + 1:]]
             dis = sum((cells[(a, d)]["P1_posts"] - cells[(b, d)]["P1_posts"]) * (neff[a] - neff[b]) < 0 for a, b in pairs)
+            disA = sum((cells[(a, d)]["P1_posts"] - cells[(b, d)]["P1_posts"]) * (cells[(a, d)]["P3_authors"] - cells[(b, d)]["P3_authors"]) < 0 for a, b in pairs)
             shares.append(dis / len(pairs))
+            sharesA.append(disA / len(pairs))
+            day_of.append(d)
+        rb = np.random.default_rng(20261107)
+        ck_bs = [float(np.mean([shares[i] for i in rb.integers(0, len(shares), len(shares))])) for _ in range(2000)] if shares else []
+        perday = MON.evaluate(cells, topics, s["eval"], 3)
+        def pd_(p):
+            return np.array([MON.select_value(cells, topics, d, p, 3, 20) for d in s["eval"]])
+        arr = {p: pd_(p) for p in ("P1_posts", "P2_edges", "P3_authors", "P9_oracle", "SEM_AM")}
+        idx = [rb.integers(0, len(s["eval"]), len(s["eval"])) for _ in range(2000)]
+        ci = lambda f: [float(np.percentile([f(i) for i in idx], 2.5)), float(np.percentile([f(i) for i in idx], 97.5))]
+        R_ci = {p: ci(lambda i, p=p: arr[p][i].sum()) for p in arr}
+        R_ci["gain_edges"] = ci(lambda i: arr["P2_edges"][i].sum() / max(1e-9, arr["P1_posts"][i].sum()) - 1)
+        R_ci["edges_over_authors"] = ci(lambda i: arr["P2_edges"][i].sum() / max(1e-9, arr["P3_authors"][i].sum()) - 1)
         R[name] = {"gamma_star": gstar, "b_star": bstar, "dev": dev, "eval": ev, "eval_by_gamma": ev_grid,
                    "C_k": float(np.mean(shares)) if shares else None,
+                   "C_k_ci": [float(np.percentile(ck_bs, 2.5)), float(np.percentile(ck_bs, 97.5))] if ck_bs else None,
+                   "C_k_authors": float(np.mean(sharesA)) if sharesA else None, "ci": R_ci,
+                   "headroom": ev["P9_oracle"] - ev["P2_edges"],
                    "conv_share": float(np.nanmean([v for v in conv.values() if v is not None])) if any(v is not None for v in conv.values()) else None}
         print(name, {k: v for k, v in R[name].items() if k not in ("dev", "eval_by_gamma")}, flush=True)
+    R1 = {n: R.pop(n) for n in list(R) if n.endswith("_terms")}
+    rows_e3 = [r for r in rows_e3 if not r[0].endswith("_terms")]
     # E1 pooled gamma (summed development yield over settings)
     pooled = max(GRID, key=lambda g: (sum(R[n]["dev"][f"H{g}"] for n in R), -g))
-    out = {"settings": R, "pooled_gamma": pooled,
+    out = {"settings": R, "R1_terms": R1, "pooled_gamma": pooled,
            "pooled_eval": {n: R[n]["eval_by_gamma"][pooled] for n in R}}
     # E3 regression with setting-day fixed effects
     def fit(rows, with_conv=False):
@@ -172,6 +191,23 @@ def main(known_only):
     resid_gain = [R[n]["eval"]["P2_edges"] / R[n]["eval"]["P3_authors"] - 1 for n in names]
     if all(R[n]["C_k"] is not None for n in names):
         out["E4"] = {"rho_Ck_gain": float(spearmanr([R[n]["C_k"] for n in names], gain).statistic)}
+    NEWD = {"climate", "film", "games", "soccer", "space", "stocks"}
+    kn = [n for n in names if n not in NEWD and R[n]["C_k"] is not None]
+    nw = [n for n in names if n in NEWD and R[n]["C_k"] is not None]
+    if len(kn) >= 3 and nw:
+        g = {n: R[n]["eval"]["P2_edges"] / R[n]["eval"]["P1_posts"] - 1 for n in names}
+        b1, a1 = np.polyfit([R[n]["C_k"] for n in kn], [g[n] for n in kn], 1)
+        pred = {n: float(a1 + b1 * R[n]["C_k"]) for n in nw}
+        obs = [g[n] for n in nw]
+        cal = float(np.polyfit([pred[n] for n in nw], obs, 1)[0]) if len(nw) >= 3 else None
+        allx = [R[n]["C_k"] for n in kn + nw]
+        ally = [g[n] for n in kn + nw]
+        r0 = spearmanr(allx, ally).statistic
+        pr = np.random.default_rng(20261107)
+        perm = sum(spearmanr(allx, pr.permutation(ally)).statistic >= r0 for _ in range(10000))
+        out["R4"] = {"fit": [float(a1), float(b1)], "pred": pred, "mae": float(np.mean([abs(pred[n] - g[n]) for n in nw])),
+                     "calibration_slope": cal, "rho_all": float(r0), "p_all": (perm + 1) / 10001,
+                     "rho_new_Ck": float(spearmanr([R[n]["C_k"] for n in nw], obs).statistic) if len(nw) >= 3 else None}
     if all(R[n]["conv_share"] is not None for n in names):
         out["E6"] = {"rho_conv_resid_gain": float(spearmanr([R[n]["conv_share"] for n in names], resid_gain).statistic)}
     print(json.dumps({k: v for k, v in out.items() if k != "settings"}, indent=1, default=str))

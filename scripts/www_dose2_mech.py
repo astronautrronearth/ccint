@@ -99,6 +99,32 @@ def settings(known_only):
     return out
 
 
+CYBER_TERMS = ["ransomware", "phishing", "data breach", "cyberattack", "cybersecurity", "cyber attack", "malware",
+               "infostealer", "zero-day", "ddos", "hacked", "data leak", "credential stuffing", "spyware", "botnet",
+               "vulnerability exploit", "security breach", "identity theft", "CVE", "threat actor", "incident response",
+               "cyber incident", "password breach", "account takeover", "supply chain attack"]
+
+
+def term_version(S):
+    """PREREG_DOSE2 amendment 5 R1: the same roots with matched cyber_v1 search terms as units."""
+    pat = {t: re.compile(r"(?<!\w)" + re.escape(t) + r"(?!\w)", re.I) for t in CYBER_TERMS}
+    posts = sorted({x[0] if isinstance(x, tuple) else x for x in S["seeds"]})
+    base = {}
+    for x in S["seeds"]:
+        base.setdefault(x[0] if isinstance(x, tuple) else x, x)
+    pairs, pinfo, peb, pth = [], {}, {}, {}
+    for p_ in posts:
+        r = S["info"][base[p_]]
+        units = [t for t, pt in pat.items() if pt.search(r["text"] or "")] or ["other"]
+        for u in units:
+            k = (p_, u)
+            pairs.append(k)
+            pinfo[k] = dict(r, topic=u)
+            peb[k] = S["eb"][base[p_]]
+            pth[k] = S["th"].get(base[p_]) if isinstance(S["th"], dict) else None
+    return dict(S, seeds=pairs, info=pinfo, eb=peb, th=pth)
+
+
 def conc_by_topic(S, days):
     by = defaultdict(list)
     for s in S["seeds"]:
@@ -234,8 +260,10 @@ def analyse(name, S, rng):
 def main(known_only):
     rng = np.random.default_rng(20261107)
     S = settings(known_only)
-    R = {n: analyse(n, s, rng) for n, s in S.items()}
-    out = {"settings": {n: {k: v for k, v in r.items() if k != "M_points"} for n, r in R.items()}}
+    R_all = {n: analyse(n, s, rng) for n, s in S.items()}
+    R = {n: r for n, r in R_all.items() if not n.endswith("_terms")}
+    out = {"settings": {n: {k: v for k, v in r.items() if k != "M_points"} for n, r in R.items()},
+           "R1_terms": {n: {k: v for k, v in r.items() if k != "M_points"} for n, r in R_all.items() if n.endswith("_terms")}}
     for n, r in R.items():                                  # binned M points for the figure (quintiles of log q)
         P = r["M_points"]
         if len(P) >= 10:
