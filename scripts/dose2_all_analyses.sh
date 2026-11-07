@@ -12,4 +12,5 @@ echo "=== $(date -u +%FT%TZ) start all analyses"
 ./.venv/bin/python scripts/www_peak_rule.py > logs/peak_rule.log 2>&1
 ./.venv/bin/python scripts/www_listener_rules.py > logs/listener_rules.log 2>&1
 ./.venv/bin/python scripts/www_heavy_tail.py > logs/heavy_tail.log 2>&1
+./.venv/bin/python scripts/www_ranker.py > logs/ranker.log 2>&1
 echo "=== $(date -u +%FT%TZ) ALL ANALYSES DONE"
