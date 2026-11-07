@@ -20,6 +20,7 @@ from ccint import db  # noqa: E402
 from ccint.interaction import manifest as mf  # noqa: E402
 
 NEW = ["climate", "film", "games", "soccer", "space", "stocks"]
+NEW3 = ["music", "books", "f1", "tennis", "health", "food"]
 
 
 def _mod(name, path):
@@ -95,6 +96,17 @@ def settings(known_only):
             terms = getattr(CC, f"{dom.upper()}_TERMS")
             pat = {t: re.compile(r"(?<!\w)" + re.escape(t) + r"(?!\w)", re.I) for t in terms}
             add(dom, dom, [int(r["post_id"]) for r in m3.population(f"in_{dom}")], runs3,
+                lambda r, pat=pat: [t for t, p in pat.items() if p.search(r["text"] or "")] or ["other"])
+    if not known_only and (Path("manifests/interaction_experiment/www_dose3") / "seed_manifest.meta.json").exists():
+        # PREREG_DOSE3 test domains (data-loading only; same split and unit rule as PREREG_DOSE2)
+        m4 = mf.load("www_dose3")
+        with db.connect() as c:
+            runs4 = [r["run_id"] for r in c.execute(
+                "SELECT run_id FROM neighborhood_runs WHERE purpose = 'dose3' AND manifest_sha256 = %s", (m4.sha256,))]
+        for dom in NEW3:
+            terms = getattr(CC, f"{dom.upper()}_TERMS")
+            pat = {t: re.compile(r"(?<!\w)" + re.escape(t) + r"(?!\w)", re.I) for t in terms}
+            add(dom, dom, [int(r["post_id"]) for r in m4.population(f"in_{dom}")], runs4,
                 lambda r, pat=pat: [t for t, p in pat.items() if p.search(r["text"] or "")] or ["other"])
     out["cyber_main_terms"] = term_version(out["cyber_main"])
     out["cyber_fresh_terms"] = term_version(out["cyber_fresh"])

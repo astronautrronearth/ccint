@@ -43,9 +43,24 @@ SPACE_TERMS = ["NASA", "SpaceX", "Starship", "ISS", "astronomy", "telescope", "J
                "Artemis", "Mars rover", "Blue Origin", "aurora"]
 STOCKS_TERMS = ["stock market", "S&P 500", "Nasdaq", "Dow Jones", "earnings call", "stocks", "Federal Reserve",
                 "interest rates", "inflation", "Tesla stock", "Nvidia stock", "IPO", "dividend"]
+# PREREG_DOSE3 (2026-11-07): six test domains for the robust counts fixed in PREREG_DOSE3
+MUSIC_TERMS = ["new album", "Spotify", "concert", "music video", "Grammys", "Taylor Swift", "Billboard", "vinyl",
+               "setlist", "tour dates", "Bandcamp", "K-pop", "album review"]
+BOOKS_TERMS = ["new book", "novel", "reading list", "Goodreads", "audiobook", "booktok", "bookstore", "publishing",
+               "book review", "fantasy book", "Booker Prize", "poetry collection", "library"]
+F1_TERMS = ["Formula 1", "F1", "Grand Prix", "Verstappen", "Hamilton", "McLaren", "Ferrari F1", "Red Bull Racing",
+            "qualifying", "pit stop", "Norris", "Leclerc", "MotoGP"]
+TENNIS_TERMS = ["tennis", "ATP", "WTA", "Djokovic", "Alcaraz", "Sinner", "Sabalenka", "Swiatek", "Coco Gauff",
+                "Davis Cup", "Billie Jean King Cup", "ATP Finals", "grand slam"]
+HEALTH_TERMS = ["vaccine", "measles", "flu season", "COVID", "public health", "CDC", "World Health Organization", "mental health",
+                "long covid", "bird flu", "Medicaid", "outbreak", "RFK Jr"]
+FOOD_TERMS = ["recipe", "baking", "sourdough", "restaurant", "cooking", "dinner tonight", "vegan", "coffee",
+              "Thanksgiving dinner", "ramen", "pizza", "meal prep", "food review"]
 DOMAINS = {"nba": (NBA_TERMS, "nba_v1"), "crypto": (CRYPTO_TERMS, "crypto_v1"), "ai": (AI_TERMS, "ai_v1"),
            "climate": (CLIMATE_TERMS, "climate_v1"), "film": (FILM_TERMS, "film_v1"), "games": (GAMES_TERMS, "games_v1"),
-           "soccer": (SOCCER_TERMS, "soccer_v1"), "space": (SPACE_TERMS, "space_v1"), "stocks": (STOCKS_TERMS, "stocks_v1")}
+           "soccer": (SOCCER_TERMS, "soccer_v1"), "space": (SPACE_TERMS, "space_v1"), "stocks": (STOCKS_TERMS, "stocks_v1"),
+           "music": (MUSIC_TERMS, "music_v1"), "books": (BOOKS_TERMS, "books_v1"), "f1": (F1_TERMS, "f1_v1"),
+           "tennis": (TENNIS_TERMS, "tennis_v1"), "health": (HEALTH_TERMS, "health_v1"), "food": (FOOD_TERMS, "food_v1")}
 
 
 class ContrastCollector(BlueskyCollector):

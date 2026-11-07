@@ -31,6 +31,8 @@ MECH = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(MECH)
 MON = MECH.MON
 ACT = Counter()
+KQ = {}                               # adaptive kappa per quantile, set per setting from history days only
+QS = (0.5, 0.75, 0.9)
 GRID_B = [1, 3, 10, 100, 300]        # 100, 300: Sybil attacks (many new accounts, few replies each)
 GRID_R = [0, 50, 200, 1000]
 DRAWS = 20
@@ -138,7 +140,16 @@ def scores(c, fake, fake_est=None, fake_ids=None):
             # of conversational responders); a non-conversing attacker cannot raise the cap
             **{f"clip_k{k}": float(min(c["E"] + sum(fake) + sum(fake_est),
                                         k * (1 + len(c["conv"] - set(fake_ids)) + len(set(fake_ids) & c["conv"]))))
-               for k in (2, 4, 8, 16)}}
+               for k in (2, 4, 8, 16)},
+            # adaptive clipping (exploratory, after amendment 15's held-out reading): kappa = the setting's own
+            # quantile q of R/(1+C) over (topic, day) cells on history days
+            **{f"clipA_q{int(q*100)}": float(min(c["E"] + sum(fake) + sum(fake_est),
+                                                 KQ[q] * (1 + len(c["conv"] - set(fake_ids)) + len(set(fake_ids) & c["conv"]))))
+               for q in QS},
+            # reach x propensity (exploratory): authors^(1-b) * clipped replies^b, clipped at the q90 adaptive kappa
+            **{f"AxR_b{int(b*100)}": float(c["A"] ** (1 - b) * (1 + min(c["E"] + sum(fake) + sum(fake_est),
+                   KQ[0.9] * (1 + len(c["conv"] - set(fake_ids)) + len(set(fake_ids) & c["conv"])))) ** b)
+               for b in (0.25, 0.5, 0.75)}}
 
 
 ATTACKS = {  # name: (kind, B accounts, R total fake replies); parameters from docs/revision/LITREV_1107/manipulation.md
@@ -165,13 +176,18 @@ ATTACKS = {  # name: (kind, B accounts, R total fake replies); parameters from d
 def run(S):
     global ACT
     cells = cells_of(S)
+    hd = set(S["hist"])
+    rat = [c["E"] / (1 + len(c["conv"])) for (t, d), c in cells.items() if d in hd]
+    for q in QS:
+        KQ[q] = float(np.quantile(rat, q)) if rat else 4.0
+    print("kappa", {q: round(KQ[q], 2) for q in QS}, flush=True)
     ACT = Counter()
     for c in cells.values():
         for j, k in c["resp"].items():
             ACT[j] += k
     ev = sorted(S["eval"])
     pols = ["edges", "responders", "eff_resp_D1", "eff_resp_D2", "est_resp", "est_eff_D1", "new_unit_D1",
-            "new_unit_est_D1", "conv_resp", "conv_new_unit", "conv_w25", "conv_w50", "clip_k2", "clip_k4", "clip_k8", "clip_k16", "authors", "posts", "oracle"]
+            "new_unit_est_D1", "conv_resp", "conv_new_unit", "conv_w25", "conv_w50", "clip_k2", "clip_k4", "clip_k8", "clip_k16", "clipA_q50", "clipA_q75", "clipA_q90", "AxR_b25", "AxR_b50", "AxR_b75", "authors", "posts", "oracle"]
     out = {}
     for name, (kind, B, R) in ATTACKS.items():
         rng = np.random.default_rng([20261107, B, R, len(kind)])
