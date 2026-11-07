@@ -31,7 +31,8 @@ MECH = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(MECH)
 MON = MECH.MON
 ACT = Counter()
-KQ = {}                               # adaptive kappa per quantile, set per setting from history days only
+KQ = {}
+KR = {}                               # adaptive kappa per quantile, set per setting from history days only
 QS = (0.5, 0.75, 0.9)
 GRID_B = [1, 3, 10, 100, 300]        # 100, 300: Sybil attacks (many new accounts, few replies each)
 GRID_R = [0, 50, 200, 1000]
@@ -50,6 +51,7 @@ def cells_of(S):
         before, after, resp = set(), set(), Counter()
         ne = 0
         conv = set()
+        recv_by, d1u = {}, set()
         for s in R:
             a = S["info"][s]["author_id"]
             pre = [e for e in S["eb"][s] if e["event_created_at"] is not None and e["event_created_at"] < c]
@@ -60,6 +62,18 @@ def cells_of(S):
                 # a responder is in conversation if they replied to a reply, or their reply drew a reply
                 if e.get("depth") == 2 or (e.get("depth") == 1 and e["source_post_uri"] in replied_to):
                     conv.add(e["source_actor_id"])
+            # receipt-based (2026-11-07, after cold review W1): a depth-1 replier counts only if another account
+            # answered their reply; answerers are kept to test whether they are established
+            d1_author = {e["source_post_uri"]: e["source_actor_id"] for e in pre if e.get("depth") == 1}
+            for e in pre:
+                if e.get("depth") == 2 and e["target_post_uri"] in d1_author:
+                    j = d1_author[e["target_post_uri"]]
+                    if j != a and e["source_actor_id"] != j:
+                        recv_by.setdefault(j, set()).add(e["source_actor_id"])
+                        d1u.discard(j)
+            for e in pre:
+                if e.get("depth") == 1 and e["source_actor_id"] != a and e["source_actor_id"] not in recv_by:
+                    d1u.add(e["source_actor_id"])
             for e in S["eb"][s]:
                 ts = e["event_created_at"]
                 if ts is None:
@@ -73,7 +87,8 @@ def cells_of(S):
                 elif ts < c2 and ext:
                     after.add(e["source_actor_id"])
         cells[(t, d)] = {"V": len(R), "A": len({S["info"][s]["author_id"] for s in R}), "E": ne, "resp": resp,
-                         "T": after - before, "conv": conv}
+                         "T": after - before, "conv": conv,
+                         "recv_by": recv_by, "d1u": d1u - set(recv_by)}
     # established responders: accounts that replied to any unit of the setting on an earlier day (before d's start)
     first_seen = {}
     for (t, d), c in sorted(cells.items(), key=lambda kv: kv[0][1]):
@@ -85,6 +100,8 @@ def cells_of(S):
         c["prev_unit"] = set(prev)
         prev |= set(c["resp"])
     for (t, d), c in cells.items():
+        c["recv"] = set(c["recv_by"])
+        c["recv_est"] = {j for j, ks in c["recv_by"].items() if any(first_seen.get(k, d) < d for k in ks)}
         c["est"] = Counter({j: k for j, k in c["resp"].items() if first_seen.get(j, d) < d})
     # pool of established accounts per day (for sleeper attacks)
     pool = {}
@@ -146,6 +163,20 @@ def scores(c, fake, fake_est=None, fake_ids=None):
             **{f"clipA_q{int(q*100)}": float(min(c["E"] + sum(fake) + sum(fake_est),
                                                  KQ[q] * (1 + len(c["conv"] - set(fake_ids)) + len(set(fake_ids) & c["conv"]))))
                for q in QS},
+            # receipt-anchored (amendment 1 to PREREG_DOSE3): C = repliers answered by another account (recv) or by an
+            # established account (recv_est); kappa = history q90 of R/(1+C) for the same C
+            "anchR_q90": float(min(c["E"] + sum(fake) + sum(fake_est), KR["recv"] * (1 + len(c["recv"])))),
+            "anchRE_q90": float(min(c["E"] + sum(fake) + sum(fake_est), KR["recv_est"] * (1 + len(c["recv_est"])))),
+            "AxRE_b75": float(c["A"] ** 0.25 * (1 + min(c["E"] + sum(fake) + sum(fake_est),
+                                                        KR["recv_est"] * (1 + len(c["recv_est"])))) ** 0.75),
+            # ablations demanded by the cold review: anchor to authors; per-responder cap (trimmed replies)
+            "anchA_q90": float(min(c["E"] + sum(fake) + sum(fake_est), KR["A"] * (1 + c["A"]))),
+            **{f"anchA_q{q}": float(min(c["E"] + sum(fake) + sum(fake_est), KR[f"A{q}"] * (1 + c["A"]))) for q in (95, 99)},
+            "anchAR_q90": float(min(c["E"] + sum(fake) + sum(fake_est), KR["A"] * (1 + c["A"]), KR["recv"] * (1 + len(c["recv"])))),
+            "anchAR_q99": float(min(c["E"] + sum(fake) + sum(fake_est), KR["A99"] * (1 + c["A"]), KR["recv"] * (1 + len(c["recv"])))),
+            "trim2": float(sum(min(k, 2) for k in c["resp"].values()) + sum(min(k, 2) for k in fake) +
+                           sum(min(k, 2) for k in fake_est)),
+            "trim1": float(len(c["resp"]) + len(fake) + len(fake_est)),
             # reach x propensity (exploratory): authors^(1-b) * clipped replies^b, clipped at the q90 adaptive kappa
             **{f"AxR_b{int(b*100)}": float(c["A"] ** (1 - b) * (1 + min(c["E"] + sum(fake) + sum(fake_est),
                    KQ[0.9] * (1 + len(c["conv"] - set(fake_ids)) + len(set(fake_ids) & c["conv"])))) ** b)
@@ -170,6 +201,14 @@ ATTACKS = {  # name: (kind, B accounts, R total fake replies); parameters from d
     "A7_brigade_B200_R400": ("sleeper_low", 200, 400),
     # A8 adaptive: established accounts that also reply to each other (fake conversation); breaks conversation checks
     "A8_fake_conversation_B100_R200": ("sleeper_conv", 100, 200),
+    # A9 (cold review W1): accounts reply to real replies on the victim topic, so they "reply to a reply" and the real
+    # repliers they answer now "drew a reply". A9a fresh accounts, A9b aged accounts (established, high activity)
+    "A9a_reply_to_replies_B300_R450": ("r2r_new", 300, 450),
+    "A9b_reply_to_replies_aged_B300_R450": ("r2r_aged", 300, 450),
+    # A10 (cold review W3): fresh accounts post on the victim topic instead of replying (astroturf posting);
+    # A11: the same accounts both post and reply-bomb (both sides inflated)
+    "A10_post_flood_B300": ("post_flood", 300, 0),
+    "A11_post_and_reply_B300_R450": ("post_reply", 300, 450),
 }
 
 
@@ -181,13 +220,20 @@ def run(S):
     for q in QS:
         KQ[q] = float(np.quantile(rat, q)) if rat else 4.0
     print("kappa", {q: round(KQ[q], 2) for q in QS}, flush=True)
+    hc = [c for (t, d), c in cells.items() if d in hd]
+    KR["recv"] = float(np.quantile([c["E"] / (1 + len(c["recv"])) for c in hc], 0.9)) if hc else 4.0
+    KR["recv_est"] = float(np.quantile([c["E"] / (1 + len(c["recv_est"])) for c in hc], 0.9)) if hc else 4.0
+    KR["A"] = float(np.quantile([c["E"] / (1 + c["A"]) for c in hc], 0.9)) if hc else 4.0
+    for q in (95, 99):
+        KR[f"A{q}"] = float(np.quantile([c["E"] / (1 + c["A"]) for c in hc], q / 100)) if hc else 4.0
+    print("kappa_recv", {k: round(v, 2) for k, v in KR.items()}, flush=True)
     ACT = Counter()
     for c in cells.values():
         for j, k in c["resp"].items():
             ACT[j] += k
     ev = sorted(S["eval"])
     pols = ["edges", "responders", "eff_resp_D1", "eff_resp_D2", "est_resp", "est_eff_D1", "new_unit_D1",
-            "new_unit_est_D1", "conv_resp", "conv_new_unit", "conv_w25", "conv_w50", "clip_k2", "clip_k4", "clip_k8", "clip_k16", "clipA_q50", "clipA_q75", "clipA_q90", "AxR_b25", "AxR_b50", "AxR_b75", "authors", "posts", "oracle"]
+            "new_unit_est_D1", "conv_resp", "conv_new_unit", "conv_w25", "conv_w50", "clip_k2", "clip_k4", "clip_k8", "clip_k16", "clipA_q50", "clipA_q75", "clipA_q90", "AxR_b25", "AxR_b50", "AxR_b75", "anchR_q90", "anchRE_q90", "AxRE_b75", "anchA_q90", "anchA_q95", "anchA_q99", "anchAR_q90", "anchAR_q99", "trim2", "trim1", "authors", "posts", "oracle"]
     out = {}
     for name, (kind, B, R) in ATTACKS.items():
         rng = np.random.default_rng([20261107, B, R, len(kind)])
@@ -215,6 +261,20 @@ def run(S):
                     if pool:
                         fids = list(rng.choice(pool, size=min(B, len(pool)), replace=False))
                         fest = [max(1, R // B)] * len(fids)
+                elif kind in ("post_flood", "post_reply"):
+                    victim = low[rng.integers(len(low))]
+                    if kind == "post_reply":
+                        fake = [max(1, R // B)] * B
+                elif kind in ("r2r_new", "r2r_aged"):
+                    victim = low[rng.integers(len(low))]
+                    if kind == "r2r_new":
+                        fake = [max(1, R // B)] * B
+                    else:
+                        pool = sorted(cells[(victim, d)]["pool"], key=lambda j: (ACT.get(j, 0), j))
+                        pool = pool[len(pool) // 2:]
+                        if pool:
+                            fids = list(rng.choice(pool, size=min(B, len(pool)), replace=False))
+                            fest = [max(1, R // B)] * len(fids)
                 elif kind == "pod":
                     if pod_victim is None or (pod_victim, d) not in cells:
                         cand = [t for t in low]
@@ -234,10 +294,32 @@ def run(S):
                     cv_conv = cv["conv"]
                     cv["conv"] = cv_conv | set(fids)
                     cv_resp = cv["resp"]
+                    # staged exchanges among aged accounts: each fake reply is answered by another fake (established)
+                    cv_recv, cv_recv_est = cv["recv"], cv["recv_est"]
+                    cv["recv"] = cv_recv | set(fids)
+                    cv["recv_est"] = cv_recv_est | set(fids)
+                if kind in ("post_flood", "post_reply") and victim is not None:
+                    cp = cells[(victim, d)]
+                    cp["A"] += B; cp["V"] += B
+                if kind in ("r2r_new", "r2r_aged") and victim is not None:
+                    cv = cells[(victim, d)]
+                    saved = (cv["conv"], cv["recv"], cv["recv_est"])
+                    U = sorted(cv["d1u"])
+                    hit = set(rng.choice(U, size=min(R, len(U)), replace=True)) if U else set()   # answered real repliers
+                    nfake = B if kind == "r2r_new" else 0
+                    cv["conv"] = cv["conv"] | set(fids) | {("fake", i) for i in range(nfake)}
+                    cv["recv"] = cv["recv"] | hit
+                    if kind == "r2r_aged":
+                        cv["recv_est"] = cv["recv_est"] | hit
                 sc = {t: scores(cells[(t, d)], fake if t == victim else [], fest if t == victim else [],
                                 fids if t == victim else []) for t in T}
                 if kind == "sleeper_conv" and victim is not None:
                     cv["conv"], cv["resp"] = cv_conv, cv_resp
+                    cv["recv"], cv["recv_est"] = cv_recv, cv_recv_est
+                if kind in ("r2r_new", "r2r_aged") and victim is not None:
+                    cv["conv"], cv["recv"], cv["recv_est"] = saved
+                if kind in ("post_flood", "post_reply") and victim is not None:
+                    cp["A"] -= B; cp["V"] -= B
                 if kind == "pod" and victim is not None:
                     cells[(victim, d)]["prev_unit"] = c_prev
                     pod_seen |= set(fids)

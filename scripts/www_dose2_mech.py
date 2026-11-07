@@ -97,7 +97,8 @@ def settings(known_only):
             pat = {t: re.compile(r"(?<!\w)" + re.escape(t) + r"(?!\w)", re.I) for t in terms}
             add(dom, dom, [int(r["post_id"]) for r in m3.population(f"in_{dom}")], runs3,
                 lambda r, pat=pat: [t for t, p in pat.items() if p.search(r["text"] or "")] or ["other"])
-    if not known_only and (Path("manifests/interaction_experiment/www_dose3") / "seed_manifest.meta.json").exists():
+    done3 = Path("logs/dose3_collect.log").exists() and "DOSE3 PIPELINE DONE" in Path("logs/dose3_collect.log").read_text()
+    if not known_only and done3:   # never load the test domains before their collection has finished
         # PREREG_DOSE3 test domains (data-loading only; same split and unit rule as PREREG_DOSE2)
         m4 = mf.load("www_dose3")
         with db.connect() as c:
