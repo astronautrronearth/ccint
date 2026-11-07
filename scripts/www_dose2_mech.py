@@ -96,6 +96,8 @@ def settings(known_only):
             pat = {t: re.compile(r"(?<!\w)" + re.escape(t) + r"(?!\w)", re.I) for t in terms}
             add(dom, dom, [int(r["post_id"]) for r in m3.population(f"in_{dom}")], runs3,
                 lambda r, pat=pat: [t for t, p in pat.items() if p.search(r["text"] or "")] or ["other"])
+    out["cyber_main_terms"] = term_version(out["cyber_main"])
+    out["cyber_fresh_terms"] = term_version(out["cyber_fresh"])
     return out
 
 
