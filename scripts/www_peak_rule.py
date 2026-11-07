@@ -4,9 +4,9 @@ from collections import defaultdict
 sys.path[:0] = ["src", "scripts"]
 spec = importlib.util.spec_from_file_location("bf", "scripts/www_budget_fetch.py"); BF = importlib.util.module_from_spec(spec); spec.loader.exec_module(BF)
 BF.ECAP = 10 ** 9
-SS = BF.MECH.settings(True)
+SS = BF.MECH.settings("--known-only" in sys.argv)
 GRID = [1, 2, 3, 5, 10, 20, 10 ** 9]
-for n in ("cyber_main", "cyber_fresh", "nba", "crypto", "ai"):
+for n in [x for x in SS if not x.endswith("_terms")]:
     S = SS[n]
     cells = BF.prepare(S, {}, {})
     for c in cells.values():

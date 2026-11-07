@@ -4,8 +4,8 @@ sys.path[:0] = ["src", "scripts"]
 spec = importlib.util.spec_from_file_location("bf", "scripts/www_budget_fetch.py"); BF = importlib.util.module_from_spec(spec); spec.loader.exec_module(BF)
 BF.ECAP = 10 ** 9
 EMBV, TYPES = {}, {}
-SS = BF.MECH.settings(True)
-for n in ("cyber_main", "cyber_fresh", "nba", "crypto", "ai"):
+SS = BF.MECH.settings("--known-only" in sys.argv)
+for n in [x for x in SS if not x.endswith("_terms")]:
     S = SS[n]
     cells = BF.prepare(S, EMBV, TYPES)
     ev = list(S["eval"])
