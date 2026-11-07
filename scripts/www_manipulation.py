@@ -30,6 +30,7 @@ spec = importlib.util.spec_from_file_location("mech", "scripts/www_dose2_mech.py
 MECH = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(MECH)
 MON = MECH.MON
+ACT = Counter()
 GRID_B = [1, 3, 10, 100, 300]        # 100, 300: Sybil attacks (many new accounts, few replies each)
 GRID_R = [0, 50, 200, 1000]
 DRAWS = 20
@@ -113,18 +114,32 @@ def scores(c, fake, fake_est=None, fake_ids=None):
             "authors": c["A"], "posts": c["V"], "oracle": len(c["T"])}
 
 
-ATTACKS = {  # name: (kind, B, R)
+ATTACKS = {  # name: (kind, B accounts, R total fake replies); parameters from docs/revision/LITREV_1107/manipulation.md
     "clean": ("none", 0, 0),
-    "A1_reply_bomb_B3_R200": ("new", 3, 200), "A1_reply_bomb_B3_R1000": ("new", 3, 1000),
-    "A2_sybil_B100_R200": ("new", 100, 200), "A2_sybil_B300_R600": ("new", 300, 600),
-    "A3_sleeper_B30_R60": ("sleeper", 30, 60), "A3_sleeper_B100_R200": ("sleeper", 100, 200),
-    "A4_pod_G20_R100": ("pod", 20, 100), "A4_pod_G50_R250": ("pod", 50, 250),
-    "A5_sockpuppet_B10_R200": ("new", 10, 200),
+    # A1 reply bombing (Pote et al. ICWSM 2025): few young accounts, tens to hundreds of replies each
+    "A1_reply_bomb_B5_R200": ("new", 5, 200), "A1_reply_bomb_B5_R1000": ("new", 5, 1000),
+    # A2 fresh Sybil swarm (Elmas et al. EuroS&P 2021; De Cristofaro et al. IMC 2014): many new accounts, 1-2 each
+    "A2_sybil_B300_R450": ("new", 300, 450), "A2_sybil_B1000_R1500": ("new", 1000, 1500),
+    # A3 aged sleepers (Thomas et al. USENIX Security 2013): purchased accounts with little prior activity
+    "A3_sleeper_B100_R150": ("sleeper_low", 100, 150), "A3_sleeper_B500_R750": ("sleeper_low", 500, 750),
+    # A4 compromised accounts (Elmas 2021): organic accounts with full history, 1 reply each
+    "A4_compromised_B100_R100": ("sleeper_high", 100, 100), "A4_compromised_B500_R500": ("sleeper_high", 500, 500),
+    # A5 engagement pod (Weerasinghe et al. WWW 2020): established accounts, same unit every day, 1 reply each
+    "A5_pod_G50_R50": ("pod", 50, 50), "A5_pod_G350_R350": ("pod", 350, 350),
+    # A6 sockpuppet pair (Kumar et al. WWW 2017): 2-3 accounts, a few replies
+    "A6_sockpuppet_B3_R15": ("new", 3, 15),
+    # A7 mobilised brigade (Kumar et al. WWW 2018): real low-activity accounts, 1-3 replies each
+    "A7_brigade_B200_R400": ("sleeper_low", 200, 400),
 }
 
 
 def run(S):
+    global ACT
     cells = cells_of(S)
+    ACT = Counter()
+    for c in cells.values():
+        for j, k in c["resp"].items():
+            ACT[j] += k
     ev = sorted(S["eval"])
     pols = ["edges", "responders", "eff_resp_D1", "eff_resp_D2", "est_resp", "est_eff_D1", "new_unit_D1",
             "new_unit_est_D1", "authors", "posts", "oracle"]
@@ -147,9 +162,11 @@ def run(S):
                 if kind == "new":
                     victim = low[rng.integers(len(low))]
                     fake = [max(1, R // B)] * B
-                elif kind == "sleeper":
+                elif kind in ("sleeper_low", "sleeper_high"):
                     victim = low[rng.integers(len(low))]
-                    pool = sorted(cells[(victim, d)]["pool"])
+                    pool = sorted(cells[(victim, d)]["pool"], key=lambda j: (ACT.get(j, 0), j))
+                    half = len(pool) // 2
+                    pool = pool[:half] if kind == "sleeper_low" else pool[half:]
                     if pool:
                         fids = list(rng.choice(pool, size=min(B, len(pool)), replace=False))
                         fest = [max(1, R // B)] * len(fids)
