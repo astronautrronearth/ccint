@@ -235,6 +235,7 @@ def run_day(cells, d, score, prior, h, policy, B, rng, k=3, z=1.0):
                 used += fetch(max(out, key=lambda t: hi[t]))
     sc = {t: q(t, est(t)[0]) for t in T}
     sel = choose(sc, k)
+    run_day.last_sel = set(sel)
     return float(len(set().union(*[C[t]["T"] for t in sel]))), used
 
 
@@ -244,22 +245,38 @@ def run_setting(name, S, EMBV, TYPES, seeds):
     ev = list(S["eval"])
     Vday = {d: sum(c["V"] for (t, dd), c in cells.items() if dd == d) for d in ev}
     res = {"posts_eval": sum(Vday.values())}
+    full_sel = {}
     for pol in ("free", "full"):
         rng = np.random.default_rng(1)
-        res[pol] = {"yield": sum(run_day(cells, d, score, prior, h, pol, 0.0, rng)[0] for d in ev), "cost": 0 if pol == "free" else res["posts_eval"]}
+        y = 0.0
+        for d in ev:
+            y += run_day(cells, d, score, prior, h, pol, 0.0, rng)[0]
+            if pol == "full":
+                full_sel[d] = run_day.last_sel
+            else:
+                full_sel.setdefault("_free", {})[d] = run_day.last_sel
+        res[pol] = {"yield": y, "cost": 0 if pol == "free" else res["posts_eval"]}
+    fs = full_sel.pop("_free")
+    res["free"]["overlap_with_full"] = float(np.mean([len(fs[d] & full_sel[d]) / 3 for d in ev]))
     # oracle and edges-only references
     res["oracle"] = sum(len(set().union(*[cells[(t, d)]["T"] for t in sorted([t for (t, dd) in cells if dd == d],
                         key=lambda t: -len(cells[(t, d)]["T"]))[:3]])) for d in ev)
     for pol in ("uniform", "stratified", "boundary", "boundary_cv"):
         res[pol] = {}
         for B in BUDGETS:
-            ys, cs = [], []
+            ys, cs, ov = [], [], []
             for sd_ in range(seeds):
                 rng = np.random.default_rng([20261107, sd_, int(B * 1000), len(pol)])
-                out = [run_day(cells, d, score, prior, h, pol, B, rng) for d in ev]
-                ys.append(sum(o[0] for o in out))
-                cs.append(sum(o[1] for o in out))
-            res[pol][str(B)] = {"yield": float(np.mean(ys)), "yield_sd": float(np.std(ys)), "cost": float(np.mean(cs))}
+                yy, cc = 0.0, 0
+                for d in ev:
+                    o = run_day(cells, d, score, prior, h, pol, B, rng)
+                    yy += o[0]
+                    cc += o[1]
+                    ov.append(len(run_day.last_sel & full_sel[d]) / 3)
+                ys.append(yy)
+                cs.append(cc)
+            res[pol][str(B)] = {"yield": float(np.mean(ys)), "yield_sd": float(np.std(ys)), "cost": float(np.mean(cs)),
+                                "overlap_with_full": float(np.mean(ov))}
     gap = res["full"]["yield"] - res["free"]["yield"]
     res["gap_full_minus_free"] = gap
     for pol in ("uniform", "stratified", "boundary", "boundary_cv"):
@@ -267,6 +284,7 @@ def run_setting(name, S, EMBV, TYPES, seeds):
         res[pol + "_recovered"] = rec
     print(name, {k: (v if not isinstance(v, dict) else {kk: (round(vv["yield"], 1) if isinstance(vv, dict) else vv) for kk, vv in v.items()})
                  for k, v in res.items() if not k.endswith("_recovered")}, flush=True)
+    print(name, "overlap", {"free": round(res["free"]["overlap_with_full"], 2), **{p: {B: round(v["overlap_with_full"], 2) for B, v in res[p].items()} for p in ("uniform", "stratified", "boundary", "boundary_cv")}}, flush=True)
     print(name, "recovered", {p: {B: (round(x, 2) if x is not None else None) for B, x in res[p + "_recovered"].items()}
                               for p in ("uniform", "stratified", "boundary", "boundary_cv")}, flush=True)
     return res
