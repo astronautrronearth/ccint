@@ -152,7 +152,7 @@ def analyse(name, S, rng):
         rt = ranks([cells[(t, d)]["target"] for t in T])
         for t, a, b in zip(T, rp, rt):
             if t in q:
-                pts.append((str(d), t, float(np.log(q[t])), float(b - a)))
+                pts.append((str(d), t, float(np.log(q[t])), float(b - a), float(np.log(len(by_pre[t])))))
     res["M_points"] = pts
     # C bootstrap over pre-evaluation days; placebo C'
     pdays = sorted(pre)
@@ -173,7 +173,7 @@ def analyse(name, S, rng):
     for s in S["seeds"]:
         r = S["info"][s]
         if r["published_at"].date() in pre:
-            act[r["topic"]].add(r["published_at"].date())
+            act[r["topic"]].add((r["published_at"].date(), r["published_at"].hour))
     big = [t for t, L in by_pre.items() if len(L) >= 30]
     res["C_placebo"] = float(1 - spearmanr([len(by_pre[t]) for t in big], [len(act[t]) for t in big]).statistic) if len(big) >= 4 else None
     # I: remove top-m output accounts' evaluation-day posts from ranking inputs (target fixed)
@@ -216,7 +216,17 @@ def main(known_only):
     R = {n: analyse(n, s, rng) for n, s in S.items()}
     out = {"settings": {n: {k: v for k, v in r.items() if k != "M_points"} for n, r in R.items()}}
     # M regression with setting fixed effects (demean within setting), bootstrap over setting-days
-    rows = [(n, d, x, o) for n, r in R.items() for d, t, x, o in r["M_points"]]
+    rows = [(n, d, x, o) for n, r in R.items() for d, t, x, o, _ in r["M_points"]]
+    # amendment 2: residualise log q on log size within setting
+    rows_sz = []
+    for n, r in R.items():
+        P = r["M_points"]
+        if len(P) < 3:
+            continue
+        X = np.array([[1, p[4]] for p in P])
+        y = np.array([p[2] for p in P])
+        beta = np.linalg.lstsq(X, y, rcond=None)[0]
+        rows_sz += [(n, p[0], float(p[2] - X[i] @ beta), p[3]) for i, p in enumerate(P)]
 
     def slope(rs):
         by = defaultdict(list)
@@ -241,7 +251,9 @@ def main(known_only):
             bs.append(v)
     out["M"] = {"n_points": len(rows), "slope": slope(rows), "ci": [float(np.percentile(bs, 2.5)), float(np.percentile(bs, 97.5))],
                 "slope_without_cyber": slope([r for r in rows if not r[0].startswith("cyber")]),
-                "slope_by_setting": {n: slope([r for r in rows if r[0] == n]) for n in R}}
+                "slope_by_setting": {n: slope([r for r in rows if r[0] == n]) for n in R},
+                "slope_size_controlled": slope(rows_sz),
+                "slope_size_controlled_by_setting": {n: slope([r for r in rows_sz if r[0] == n]) for n in R}}
     # B
     eoa = [r["edges_over_authors"] for r in R.values() if r["edges_over_authors"] is not None]
     out["B"] = {"median_edges_over_authors": float(np.median(eoa)),
