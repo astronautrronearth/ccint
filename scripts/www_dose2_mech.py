@@ -236,6 +236,13 @@ def main(known_only):
     S = settings(known_only)
     R = {n: analyse(n, s, rng) for n, s in S.items()}
     out = {"settings": {n: {k: v for k, v in r.items() if k != "M_points"} for n, r in R.items()}}
+    for n, r in R.items():                                  # binned M points for the figure (quintiles of log q)
+        P = r["M_points"]
+        if len(P) >= 10:
+            xs = np.array([p[2] for p in P]); os_ = np.array([p[3] for p in P])
+            qs = np.quantile(xs, [0, .2, .4, .6, .8, 1])
+            out["settings"][n]["M_bins"] = [[float(xs[(xs >= a) & (xs <= b)].mean()), float(os_[(xs >= a) & (xs <= b)].mean()),
+                                             int(((xs >= a) & (xs <= b)).sum())] for a, b in zip(qs[:-1], qs[1:])]
     # M regression with setting fixed effects (demean within setting), bootstrap over setting-days
     rows = [(n, d, x, o) for n, r in R.items() for d, t, x, o, _ in r["M_points"]]
     # amendment 2: residualise log q on log size within setting
