@@ -1,4 +1,8 @@
-"""EXPLORATORY COPY (2026-11-07, after RESULTS_DOSE3): adaptive all-sides attack A12 and per-day yields.
+"""Options: --victim low (default: a lower-half topic by true yield) | near (true-yield rank 4-6, just outside the
+best pick); --poison f (a random share f of history topic-days carries 450 extra unanswered replies when the caps
+are calibrated, i.e. a campaign that ran during the history window). Success = share of attacked days on which the
+victim enters the count's top 3.
+EXPLORATORY COPY (2026-11-07, after RESULTS_DOSE3): adaptive all-sides attack A12 and per-day yields.
 A13 = A12 with staged answers: B fresh repliers each answered once by a second fresh account (+B replies),
 so every fake replier is in C_recv; the B fresh accounts also post once. A12 = A9a + A10 on the same victim: B fresh accounts each post once (+A, +V) and reply R/B times to unanswered real
 depth-1 replies (+R, +C_recv, +C). Budgets B30/R45, B100/R150, B300/R450. Output manipulation_adaptive.json.
@@ -220,10 +224,18 @@ ATTACKS.update({"A12_all_sides_B30_R45": ("all_sides", 30, 45), "A12_all_sides_B
     "A13_staged_all_B300_R450": ("all_staged", 300, 450)})
 
 
+VICTIM, POISON = "low", 0.0
+
+
 def run(S):
     global ACT
     cells = cells_of(S)
     hd = set(S["hist"])
+    prng = np.random.default_rng(20261109)
+    keys_h = sorted(k for k in cells if k[1] in hd)
+    pois = set(keys_h[i] for i in prng.choice(len(keys_h), size=int(round(POISON * len(keys_h))), replace=False)) if POISON > 0 and keys_h else set()
+    for k in pois:
+        cells[k]["E"] += 450
     rat = [c["E"] / (1 + len(c["conv"])) for (t, d), c in cells.items() if d in hd]
     for q in QS:
         KQ[q] = float(np.quantile(rat, q)) if rat else 4.0
@@ -235,6 +247,8 @@ def run(S):
     for q in (95, 99):
         KR[f"A{q}"] = float(np.quantile([c["E"] / (1 + c["A"]) for c in hc], q / 100)) if hc else 4.0
     print("kappa_recv", {k: round(v, 2) for k, v in KR.items()}, flush=True)
+    for k in pois:
+        cells[k]["E"] -= 450
     ACT = Counter()
     for c in cells.values():
         for j, k in c["resp"].items():
@@ -247,6 +261,7 @@ def run(S):
         rng = np.random.default_rng([20261107, B, R, len(kind)])
         tot = {p: [] for p in pols}
         days = {p: {} for p in pols}
+        succ = {p: [] for p in pols}
         draws = 1 if kind == "none" else DRAWS
         for _ in range(draws):
             acc = {p: 0 for p in pols}
@@ -258,6 +273,9 @@ def run(S):
                 if not T:
                     continue
                 low = sorted(T, key=lambda t: len(cells[(t, d)]["T"]))[: max(1, len(T) // 2)]
+                if VICTIM == "near":
+                    dsc = sorted(T, key=lambda t: (-len(cells[(t, d)]["T"]), t))
+                    low = dsc[3:6] or dsc[-1:]
                 fake, fest, fids = [], [], []
                 victim = None
                 if kind == "new":
@@ -349,11 +367,14 @@ def run(S):
                     y_ = len(set().union(*[cells[(t, d)]["T"] for t in sel]))
                     acc[p] += y_
                     dayv[p][str(d)] = y_
+                    if victim is not None:
+                        succ[p].append(victim in sel)
             for p in pols:
                 tot[p].append(acc[p])
                 for k_, y_ in dayv[p].items():
                     days[p].setdefault(k_, []).append(y_)
         out[name] = {p: float(np.mean(v)) for p, v in tot.items()}
+        out[name]["_succ"] = {p: (float(np.mean(v)) if v else None) for p, v in succ.items()}
         out[name]["_days"] = {p: {k_: float(np.mean(v_)) for k_, v_ in days[p].items()} for p in pols}
     return out
 
@@ -361,15 +382,19 @@ def run(S):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--known-only", action="store_true")
+    ap.add_argument("--victim", default="low")
+    ap.add_argument("--poison", type=float, default=0.0)
     a = ap.parse_args()
+    global VICTIM, POISON
+    VICTIM, POISON = a.victim, a.poison
     SS = MECH.settings(a.known_only)
     res = {}
     for n in [x for x in SS if not x.endswith("_terms")]:
         res[n] = run(SS[n])
         print(n, flush=True)
         for k, r in res[n].items():
-            print("  ", k, {p: round(v) for p, v in r.items() if p != "_days"}, flush=True)
-    tag = "_known" if a.known_only else ""
+            print("  ", k, {p: round(v) for p, v in r.items() if not p.startswith("_")}, flush=True)
+    tag = ("_known" if a.known_only else "") + ("" if a.victim == "low" else f"_{a.victim}") + (f"_poison{int(100 * a.poison)}" if a.poison else "")
     Path(f"outputs/interaction_experiment/www_eval/manipulation_adaptive{tag}.json").write_text(json.dumps(res, indent=1))
 
 
