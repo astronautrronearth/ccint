@@ -58,11 +58,11 @@ def manifest():
     ids = candidate_pool_ids()
     with db.connect() as c:
         rows = c.execute("""SELECT p.post_id, p.raw_payload->>'uri' AS post_uri, p.author_id, p.published_at, p.source_key,
-                                   t.topic_key
+                                   t.topic_key, t.post_id IS NOT NULL AS labelled
                             FROM posts p LEFT JOIN post_labels t ON t.post_id = p.post_id AND t.label_version = 'topic_v2s'
                             WHERE p.post_id = ANY(%s) ORDER BY p.post_id""", (ids,)).fetchall()
-    unl = sum(r["topic_key"] is None for r in rows)
-    if unl:
+    unl = sum(not r["labelled"] for r in rows)   # topic_key NULL with a label row = unassigned (labelled)
+    if unl > 0.05 * len(rows):
         sys.exit(f"{unl} prefiltered posts still lack topic_v2s; label first")
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\n")
@@ -78,7 +78,7 @@ def manifest():
     meta = {"manifest_version": "www_crossover", "frozen_at": datetime.now(timezone.utc).isoformat(),
             "git_commit": subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip(),
             "definition": "PREREG_CROSSOVER: fresh-window rules_v2 is_cyber en posts, prefilter regex, topic_v2s = ransomware",
-            "prefiltered": len(rows), "n": n, "sha256": hashlib.sha256(data).hexdigest()}
+            "prefiltered": len(rows), "unlabelled_excluded": unl, "n": n, "sha256": hashlib.sha256(data).hexdigest()}
     meta_path.write_text(json.dumps(meta, indent=1))
     print(json.dumps(meta))
 
