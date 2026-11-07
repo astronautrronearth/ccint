@@ -133,7 +133,12 @@ def scores(c, fake, fake_est=None, fake_ids=None):
             # conversation-verified count: conversational new-to-unit responders weigh 1, other new-to-unit responders w
             "conv_w25": conv_w(c, fake, fake_ids, 0.25), "conv_w50": conv_w(c, fake, fake_ids, 0.5),
             "conv_new_unit": float(len([j for j in c["conv"] if j not in c["prev_unit"]])),
-            "authors": c["A"], "posts": c["V"], "oracle": len(c["T"])}
+            "authors": c["A"], "posts": c["V"], "oracle": len(c["T"]),
+            # conversation-anchored clipping (exploratory 2026-11-07 ~08:15): reply count capped at kappa x (1 + number
+            # of conversational responders); a non-conversing attacker cannot raise the cap
+            **{f"clip_k{k}": float(min(c["E"] + sum(fake) + sum(fake_est),
+                                        k * (1 + len(c["conv"] - set(fake_ids)) + len(set(fake_ids) & c["conv"]))))
+               for k in (2, 4, 8, 16)}}
 
 
 ATTACKS = {  # name: (kind, B accounts, R total fake replies); parameters from docs/revision/LITREV_1107/manipulation.md
@@ -166,7 +171,7 @@ def run(S):
             ACT[j] += k
     ev = sorted(S["eval"])
     pols = ["edges", "responders", "eff_resp_D1", "eff_resp_D2", "est_resp", "est_eff_D1", "new_unit_D1",
-            "new_unit_est_D1", "conv_resp", "conv_new_unit", "conv_w25", "conv_w50", "authors", "posts", "oracle"]
+            "new_unit_est_D1", "conv_resp", "conv_new_unit", "conv_w25", "conv_w50", "clip_k2", "clip_k4", "clip_k8", "clip_k16", "authors", "posts", "oracle"]
     out = {}
     for name, (kind, B, R) in ATTACKS.items():
         rng = np.random.default_rng([20261107, B, R, len(kind)])
