@@ -29,6 +29,17 @@ from ..collectors.bluesky import (
 from ..config import REPO_ROOT, settings
 from .manifest import Manifest
 
+
+def _strip_nul(x):
+    """Postgres JSONB cannot hold U+0000; drop it from strings (raw_body keeps the exact bytes)."""
+    if isinstance(x, str):
+        return x.replace("\x00", "")
+    if isinstance(x, list):
+        return [_strip_nul(v) for v in x]
+    if isinstance(x, dict):
+        return {_strip_nul(k): _strip_nul(v) for k, v in x.items()}
+    return x
+
 log = logging.getLogger(__name__)
 
 COLLECTOR_VERSION = "neighborhood_v1.1"   # v1.1: duplicate_items 跨页累计(v1 只计最后一页)
@@ -156,7 +167,7 @@ class NeighborhoodCollector:
                 (run_id, pid, uri, endpoint, Jsonb(params), resp.status, success, partial,
                  resp.error_type, resp.error_message, resp.attempts, cursor, page,
                  gzip.compress(body, mtime=0) if body is not None else None,
-                 Jsonb(resp.data) if resp.data is not None else None,
+                 Jsonb(_strip_nul(resp.data)) if resp.data is not None else None,
                  hashlib.sha256(body).hexdigest() if body is not None else None,
                  commit, COLLECTOR_VERSION))
             self.stats.snapshots += 1
