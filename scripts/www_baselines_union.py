@@ -28,6 +28,11 @@ def _mod(name, path):
 
 
 MECH = _mod("mech", "scripts/www_dose2_mech.py")
+TYPES = {}
+for _f in Path("outputs/interaction_experiment/ptype").glob("*.jsonl"):
+    for _l in open(_f):
+        _r = json.loads(_l)
+        TYPES[_r["post_id"]] = _r["type"]
 MON = MECH.MON
 
 
@@ -57,8 +62,13 @@ def sets_and_features(S):
                 elif ts < c2 and ext:
                     after.add(e["source_actor_id"])
         cnt = Counter(S["info"][s]["author_id"] for s in R)
-        cells[(t, d)] = {"posts": len(R), "authors": len(cnt), "edges": ne, "responders": len(before),
-                         "T": after - before}
+        n = len(R)
+        ty = [TYPES.get(s[0] if isinstance(s, tuple) else s) for s in R]
+        ty = [x for x in ty if x]
+        cells[(t, d)] = {"posts": n, "authors": len(cnt), "edges": ne, "responders": len(before),
+                         "T": after - before, "neff": 1 / sum((v / n) ** 2 for v in cnt.values()),
+                         "feed": sum(S["info"][s]["author_id"] in S["feeds"] for s in R) / n,
+                         "conv": (sum(x in ("question", "opinion") for x in ty) / len(ty)) if ty else None}
     return cells
 
 
@@ -147,13 +157,59 @@ def run(name, S):
         a = np.array(out[p]["per_day"])
         out[p]["vs_free_model"] = round(a.sum() / max(1e-9, fm.sum()) - 1, 4)
         out[p]["vs_free_model_ci"] = [float(np.percentile([a[i].sum() / max(1e-9, fm[i].sum()) - 1 for i in idx], q)) for q in (2.5, 97.5)]
-    print(name, {p: (v["union"], v["sum"], v.get("vs_posts_union")) for p, v in out.items()}, flush=True)
+    # W1 swaps (deterministic top-k, ties by unit name)
+    sw = {"out": defaultdict(list), "in": defaultdict(list)}
+    W2 = []
+    for d in ev:
+        T = [t for (t, dd) in cells if dd == d]
+        if len(T) < 4:
+            continue
+        top = lambda key: set(sorted(T, key=lambda t: (-cells[(t, d)][key], t))[:3])
+        P, E = top("posts"), top("edges")
+        for grp, U in (("out", P - E), ("in", E - P)):
+            for t in U:
+                c = cells[(t, d)]
+                sw[grp]["log_A_over_neff"].append(np.log(c["authors"] / c["neff"]))
+                sw[grp]["feed"].append(c["feed"])
+                sw[grp]["yield"].append(len(c["T"]))
+                if c["conv"] is not None:
+                    sw[grp]["conv"].append(c["conv"])
+        # W2 day-level discordance among top 6 by posts vs the day's union gain
+        T6 = sorted(T, key=lambda t: (-cells[(t, d)]["posts"], t))[:6]
+        pairs = [(a, b) for i, a in enumerate(T6) for b in T6[i + 1:]]
+        dis = sum((cells[(a, d)]["posts"] - cells[(b, d)]["posts"]) * (cells[(a, d)]["neff"] - cells[(b, d)]["neff"]) < 0
+                  for a, b in pairs) / len(pairs)
+        i = ev.index(d)
+        W2.append((dis, out["edges"]["per_day"][i] - out["posts"]["per_day"][i]))
+    out["W1"] = {g: {k: float(np.mean(v)) for k, v in sw[g].items()} | {"n": len(sw[g]["yield"])} for g in sw}
+    out["W2_points"] = W2
+    out["W3"] = {"producer": out["authors"]["union"] - out["posts"]["union"],
+                 "habitual": out["free_model"]["union"] - out["authors"]["union"],
+                 "today": out["free_plus_engagement"]["union"] - out["free_model"]["union"],
+                 "unreached": out["oracle"]["union"] - out["free_plus_engagement"]["union"]}
+    print(name, {p: (v["union"], v["sum"], v.get("vs_posts_union")) for p, v in out.items() if isinstance(v, dict) and "union" in v}, flush=True)
+    print(name, "W1", out["W1"], "W3", out["W3"], flush=True)
     return out
 
 
 def main(known_only):
     S = MECH.settings(known_only)
     res = {n: run(n, s) for n, s in S.items()}
+    from scipy.stats import spearmanr
+    core = [n for n in res if not n.endswith("_terms")]
+    # W2 pooled: rank-demeaned within setting
+    xs, ys = [], []
+    for n in core:
+        P = res[n]["W2_points"]
+        if len(P) >= 3:
+            from scipy.stats import rankdata
+            rx, ry = rankdata([p[0] for p in P]), rankdata([p[1] for p in P])
+            xs += list(rx - rx.mean()); ys += list(ry - ry.mean())
+    res["_W2"] = {"pooled_rank_corr": float(np.corrcoef(xs, ys)[0, 1]) if len(xs) > 3 else None, "n": len(xs),
+                  "by_setting": {n: float(spearmanr(*zip(*res[n]["W2_points"])).statistic) if len(res[n]["W2_points"]) >= 3 else None for n in core}}
+    res["_W1_support"] = sum(res[n]["W1"]["out"].get("log_A_over_neff", 0) > res[n]["W1"]["in"].get("log_A_over_neff", 0)
+                             and res[n]["W1"]["in"].get("yield", 0) > res[n]["W1"]["out"].get("yield", 0) for n in core)
+    print("W2", res["_W2"], "W1 support", res["_W1_support"], "of", len(core), flush=True)
     tag = "_known" if known_only else ""
     Path(f"outputs/interaction_experiment/www_eval/baselines_union{tag}.json").write_text(json.dumps(res, indent=1, default=str))
 
