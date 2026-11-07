@@ -205,6 +205,27 @@ def analyse(name, S, rng):
         I[str(mm)] = {"removed_posts": nrem, "gain_top": gain_after(keep), "gain_random_mean": float(np.mean(rr)) if rr else None}
     res["I"] = I
     res["cost_eval_posts"] = len(evs)
+    # amendment 3: concentration-targeted two-stage fetching
+    medq = float(np.median(list(q.values()))) if q else None
+
+    def pct(vals):
+        from scipy.stats import rankdata
+        return list(rankdata(vals) / len(vals)) if vals else []
+    T = {"T": [0.0, 0], "T_all": [0.0, 0]}
+    for d in S["eval"]:
+        cand = sorted([t for t in topics if (t, d) in cells],
+                      key=lambda t: (-cells[(t, d)]["P3_authors"], -cells[(t, d)]["P1_posts"], t))[:6]
+        if not cand:
+            continue
+        for key in T:
+            fetch = [t for t in cand if key == "T_all" or (medq is not None and q.get(t, 0) >= medq)]
+            pe = dict(zip(cand, pct([cells[(t, d)]["P2_edges"] for t in cand])))
+            pa = dict(zip(cand, pct([cells[(t, d)]["P3_authors"] for t in cand])))
+            sc = {t: (pe[t] if t in fetch else pa[t]) for t in cand}
+            pick = sorted(cand, key=lambda t: (-sc[t], -cells[(t, d)]["P3_authors"], t))[:3]
+            T[key][0] += sum(cells[(t, d)]["target"] for t in pick)
+            T[key][1] += sum(cells[(t, d)]["P1_posts"] for t in fetch)
+    res["T"] = {k: {"yield": v[0], "cost": v[1]} for k, v in T.items()}
     res["feed_share_eval"] = sum(S["info"][s]["author_id"] in S["feeds"] for s in evs) / max(1, len(evs))
     print(name, {k: v for k, v in res.items() if k != "M_points"}, flush=True)
     return res
@@ -279,6 +300,15 @@ def main(known_only):
     fetched = [n for n, f, _ in held if f]
     out["U"] = {"decisions": held, "gain_kept": sum(gain_over_auth[n] for n in fetched) / max(1e-9, sum(gain_over_auth.values())),
                 "cost_share": sum(cost[n] for n in fetched) / sum(cost.values())}
+    # amendment 3 summary
+    tot = lambda f: sum(f(R[n]) for n in R)
+    gP2 = tot(lambda r: r["totals"]["P2_edges"] - r["totals"]["P3_authors"])
+    gT = tot(lambda r: r["T"]["T"]["yield"] - r["totals"]["P3_authors"])
+    out["T"] = {"gain_recovered": gT / gP2 if gP2 else None,
+                "cost_share": tot(lambda r: r["T"]["T"]["cost"]) / tot(lambda r: r["cost_eval_posts"]),
+                "T_all_gain_recovered": tot(lambda r: r["T"]["T_all"]["yield"] - r["totals"]["P3_authors"]) / gP2 if gP2 else None,
+                "T_all_cost_share": tot(lambda r: r["T"]["T_all"]["cost"]) / tot(lambda r: r["cost_eval_posts"]),
+                "settings_recovering_80": sum((r["T"]["T"]["yield"] - r["totals"]["P3_authors"]) >= 0.8 * (r["totals"]["P2_edges"] - r["totals"]["P3_authors"]) for r in R.values())}
     # confounds (descriptive)
     out["confounds"] = {k: float(spearmanr([R[n][kk] if kk != "logposts" else np.log(R[n]["totals"]["P1_posts"] + 1) for n in names],
                                           [R[n]["gain_edges"] for n in names]).statistic)
