@@ -168,6 +168,10 @@ def evaluate():
         c = MON.cut(d)
         if pol == "posts":
             return len(L)
+        if pol == "random":
+            return 0
+        if pol == "authors":
+            return len({info[s]["author_id"] for s in L})
         if pol == "nofeed":
             return sum(info[s]["author_id"] not in feeds for s in L)
         if pol == "edges":
@@ -177,7 +181,12 @@ def evaluate():
                         if e["event_created_at"] < c and e["source_actor_id"] != info[s]["author_id"]})
         raise ValueError(pol)
 
-    def simulate(cl, pol, b, reps=50, seed=0):
+    MF = {k: M[k] | {e[0] for e in regn if first[k] - timedelta(14) <= e[2] <= first[k] + timedelta(14)
+                     and e[1] and REG.fuzzy(k, e[1])} for k in clusters}
+
+    def simulate(cl, pol, b, reps=50, seed=0, days=None, match=None):
+        days = set(EVAL) if days is None else days
+        match = M if match is None else match
         fk = {k: min(info[s]["published_at"].date() for s in L) for k, L in cl.items() if L}
         r = np.random.default_rng([20261107, seed, b, len(pol)])
         per, tot = Counter(), []
@@ -189,8 +198,8 @@ def evaluate():
                 sc = {k: score(cl[k], d, pol) + jit[i] for i, k in enumerate(pool)}
                 for k in sorted(pool, key=lambda k: -sc[k])[:b]:
                     reviewed.add(k)
-                    if d in EVAL:
-                        got |= M[k]
+                    if d in days:
+                        got |= match[k]
             tot.append(len(got))
             for e in got:
                 per[pub[e]] += 1 / reps
@@ -207,18 +216,33 @@ def evaluate():
     fe = [len(eb[s]) for s in cand if info[s]["author_id"] in feeds and s in obs]
     ne = [len(eb[s]) for s in cand if info[s]["author_id"] not in feeds and s in obs]
     out["edges_per_post"] = {"feed": round(float(np.mean(fe)), 3) if fe else None, "nonfeed": round(float(np.mean(ne)), 3) if ne else None}
-    for b in (1, 5, 10):
-        R = {p: simulate(clusters, p, b) for p in ("posts", "edges", "responders", "nofeed")}
-        days = sorted(set().union(*[set(v["per_pubday"]) for v in R.values()]))
-        for p in ("edges", "responders", "nofeed"):
-            diff = np.array([R[p]["per_pubday"].get(d, 0) - R["posts"]["per_pubday"].get(d, 0) for d in days])
-            bs = [diff[rng.integers(0, len(diff), len(diff))].sum() for _ in range(2000)] if len(diff) else [0]
-            R[p]["vs_posts"] = round(float(diff.sum()), 2)
-            R[p]["vs_posts_ci"] = [round(float(np.percentile(bs, 2.5)), 2), round(float(np.percentile(bs, 97.5)), 2)]
-        for v in R.values():
-            v["per_pubday"] = {str(d): round(x, 3) for d, x in v["per_pubday"].items()}
-        out[f"b{b}"] = R
-        print("b", b, {p: (v["claims"], v.get("vs_posts"), v.get("vs_posts_ci")) for p, v in R.items()}, flush=True)
+    out["clusters_zero_edges_share"] = round(sum(sum(len(eb[s]) for s in L) == 0 for L in clusters.values())
+                                             / max(1, len(clusters)), 3)
+    POLS = ("posts", "edges", "responders", "nofeed", "random", "authors")
+
+    def block(days=None, match=None, bs_=(1, 5, 10)):
+        res = {}
+        for b in bs_:
+            R = {p: simulate(clusters, p, b, days=days, match=match) for p in POLS}
+            dd = sorted(set().union(*[set(v["per_pubday"]) for v in R.values()]))
+            for p in POLS[1:]:
+                for ref in ("posts", "random"):
+                    if p == ref:
+                        continue
+                    diff = np.array([R[p]["per_pubday"].get(d, 0) - R[ref]["per_pubday"].get(d, 0) for d in dd])
+                    bs = [diff[rng.integers(0, len(diff), len(diff))].sum() for _ in range(2000)] if len(diff) else [0]
+                    sfx = "" if ref == "posts" else "_random"
+                    R[p][f"vs_{ref}"] = round(float(diff.sum()), 2)
+                    R[p][f"vs_{ref}_ci"] = [round(float(np.percentile(bs, 2.5)), 2), round(float(np.percentile(bs, 97.5)), 2)]
+            for v in R.values():
+                v["per_pubday"] = {str(d): round(x, 3) for d, x in v["per_pubday"].items()}
+            res[f"b{b}"] = R
+            print("b", b, {p: (v["claims"], v.get("vs_posts"), v.get("vs_posts_ci")) for p, v in R.items()}, flush=True)
+        return res
+    out.update(block())
+    out["sens_all_review_days"] = block(days=set(DAYS[3:]), bs_=(5,))
+    out["sens_fuzzy"] = block(match=MF, bs_=(5,))
+    out["sens_sum_b"] = {p: round(sum(out[f"b{b}"][p]["claims"] for b in (1, 5, 10)), 2) for p in POLS}
     # equal-budget removal (as E-E), b = 5, ranked by posts
     allp = sorted(cand)
     B = sum(info[s]["author_id"] in feeds for s in allp)
@@ -246,6 +270,12 @@ def evaluate():
     lo = r5["edges"]["vs_posts_ci"][1]
     out["reading"] = ("inconclusive (fewer than 10 attainable claims)" if out["attainable_eval"] < 10 else
                       "replicated" if lo < 0 else "not replicated" if r5["edges"]["vs_posts"] >= 0 else "inconclusive")
+    out["amend1"] = {
+        "H2_zero_share>=0.8": out["clusters_zero_edges_share"] >= 0.8,
+        "H3_feed_share>=0.8": out["feed_share_candidates"] >= 0.8,
+        "H4_edges_vs_random_ci_includes_or_below_0": r5["edges"]["vs_random_ci"][0] <= 0,
+        "H5_authors>=posts": r5["authors"]["claims"] >= r5["posts"]["claims"],
+        "H6_nofeed_ci_below_0": r5["nofeed"]["vs_posts_ci"][1] < 0}
     print("reading", out["reading"], out["attainable_eval"], flush=True)
     Path("outputs/interaction_experiment/www_eval/crossover_fresh.json").write_text(json.dumps(out, indent=1, default=str))
 
