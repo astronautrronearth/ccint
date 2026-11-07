@@ -178,6 +178,8 @@ def registry_engagement():
             return len(L)
         if pol == "edges":
             return sum(e["event_created_at"] < c for s in L for e in eb[s])
+        if pol == "random":
+            return 0
         if pol == "responders":
             return len({e["source_actor_id"] for s in L for e in eb[s]
                         if e["event_created_at"] < c and e["source_actor_id"] != info[s]["author_id"]})
@@ -186,7 +188,10 @@ def registry_engagement():
     out = {"feed_share_of_candidate_posts": round(sum(info[s]["author_id"] in feeds for s in cand) / len(cand), 3),
            "edges_per_feed_post": round(float(np.mean([len(eb[s]) for s in cand if info[s]["author_id"] in feeds])), 3),
            "edges_per_nonfeed_post": round(float(np.mean([len(eb[s]) for s in cand if info[s]["author_id"] not in feeds])), 3)}
-    for pol in ("posts", "edges", "responders"):
+    zero = [k for k in clusters if sum(len(eb[s]) for s in clusters[k]) == 0]
+    out["clusters_zero_edges_share"] = round(len(zero) / len(clusters), 3)
+    out["candidate_posts_zero_edges_share"] = round(sum(len(eb[s]) == 0 for s in cand) / len(cand), 3)
+    for pol in (("random",) if ONLY_RANDOM else ("posts", "edges", "responders")):
         r = np.random.default_rng([20261107, len(pol)])
         tot = []
         for _ in range(50):
@@ -206,7 +211,13 @@ def registry_engagement():
     return out
 
 
+ONLY_RANDOM = "--random-only" in sys.argv
+
 if __name__ == "__main__":
+    if ONLY_RANDOM:
+        r = registry_engagement()
+        Path("outputs/interaction_experiment/www_eval/story_checks_random.json").write_text(json.dumps(r, indent=1, default=str))
+        sys.exit()
     res = {"note": "post-hoc, not pre-registered (2026-11-07)", "fragility": fragility(),
            "registry_engagement": registry_engagement(), "discordance_pre_eval": discordance_pre_eval()}
     Path("outputs/interaction_experiment/www_eval/story_checks.json").write_text(json.dumps(res, indent=1, default=str))
