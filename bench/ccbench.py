@@ -62,9 +62,15 @@ ATTACKS = {
     "A12_all_sides_B300_R450": ("all_sides", 300, 450),
     "A13_staged_all_B30_R45": ("all_staged", 30, 45), "A13_staged_all_B100_R150": ("all_staged", 100, 150),
     "A13_staged_all_B300_R450": ("all_staged", 300, 450),
+    # A14 (exploratory, 2026-11-08): slow history campaign. On every day of the window, R fake accounts engage one
+    # fixed victim topic in its next-day window, so a monitor that cannot tell them from real newcomers sees the
+    # victim's history yield raised by R. No same-day replies.
+    "A14_slow_history_R15": ("history", 15, 15), "A14_slow_history_R50": ("history", 50, 50),
+    "A14_slow_history_R150": ("history", 150, 150),
 }
-PARTIAL = [a for a in ATTACKS if a != "clean" and not a.startswith(("A12", "A13"))]
-ALL_ATTACKS = [a for a in ATTACKS if a != "clean"]
+PARTIAL = [a for a in ATTACKS if a != "clean" and not a.startswith(("A12", "A13", "A14"))]   # registered A1-A11
+ALL_ATTACKS = [a for a in ATTACKS if a != "clean" and not a.startswith("A14")]               # registered A1-A13
+HISTORY_ATTACKS = [a for a in ATTACKS if a.startswith("A14")]
 
 
 @dataclass
@@ -80,6 +86,9 @@ class View:
     established: Counter
     prev_responders: set
     history_yield: float
+    history_posts: list = field(default_factory=list)   # posts of this topic on earlier days
+    topic: str = ""
+    day: str = ""
 
 
 @dataclass
@@ -99,6 +108,9 @@ class Cell:
     est: Counter = field(default_factory=Counter)
     pool: set = field(default_factory=set)
     hist_y: float = 0.0
+    hist_V: list = field(default_factory=list)
+    topic: str = ""
+    day: str = ""
 
 
 @dataclass
@@ -141,6 +153,8 @@ def _setting(doc):
         c.pool = pool[d]
         prev = [x for dd, x in by_topic[t].items() if dd < d]
         c.hist_y = float(np.mean([len(x.T) for x in prev])) if prev else 0.0
+        c.hist_V = [by_topic[t][dd].V for dd in sorted(by_topic[t]) if dd < d]
+        c.topic, c.day = t, d
     act = Counter()
     for c in cells.values():
         for j, k in c.resp.items():
@@ -156,7 +170,7 @@ def load(path):
 
 
 def clean_view(c):
-    return View(c.V, c.A, c.E, c.e, c.resp, c.conv, c.recv, c.recv_est, c.est, c.prev_unit, c.hist_y)
+    return View(c.V, c.A, c.E, c.e, c.resp, c.conv, c.recv, c.recv_est, c.est, c.prev_unit, c.hist_y, c.hist_V, c.topic, c.day)
 
 
 def day_views(S, d):
@@ -292,6 +306,109 @@ def reference_methods():
             Capped("cross_anchored", ["A", "C"]), Ranker(), Gate()]
 
 
+class RandomPick(Method):
+    """Uniform random ranking, fixed per (topic, day); attack-invariant control."""
+    name = "random"
+
+    def score(self, views):
+        import zlib
+        return {t: zlib.crc32(f"{v.topic}|{v.day}".encode()) / 2 ** 32 for t, v in views.items()}
+
+
+class Burst(Method):
+    """Today's posts against this topic's earlier days: (V - mean) / (sd + 1)."""
+    name = "burst"
+
+    def score(self, views):
+        out = {}
+        for t, v in views.items():
+            h = v.history_posts
+            out[t] = float((v.posts - np.mean(h)) / (np.std(h) + 1.0)) if len(h) >= 2 else 0.0
+        return out
+
+
+class PerPostCap(Method):
+    """Replies with each post capped at the q90 of per-post replies on history days (robust aggregation)."""
+    name = "per_post_cap"
+
+    def calibrate(self, history):
+        x = np.concatenate([v.per_post for day in history.values() for v in day.values()] or [np.array([4.0])])
+        self.c = max(1.0, float(np.quantile(x, 0.9)))
+
+    def score(self, views):
+        return {t: float(np.minimum(v.per_post, self.c).sum()) for t, v in views.items()}
+
+
+def _rich(views):
+    T = list(views)
+    F = []
+    for t in T:
+        v = views[t]
+        pp = v.per_post
+        h = v.history_posts
+        F.append([np.log1p(v.posts), np.log1p(v.authors), np.log1p(pp.sum()), np.log1p(_peak5(v)),
+                  np.log1p(len(v.responders)), np.log1p(len(v.conversational)), np.log1p(len(v.answered)),
+                  np.log1p(len(v.established)), np.log1p(v.history_yield),
+                  (v.posts - np.mean(h)) / (np.std(h) + 1.0) if len(h) >= 2 else 0.0,
+                  pp.max() / max(1.0, pp.sum()) if len(pp) else 0.0])
+    F = np.array(F, float)
+    return T, (F - F.mean(0)) / (F.std(0) + 1e-6)
+
+
+class GBM(Method):
+    """Gradient-boosted trees on 11 within-day standardised features (all View fields), target next-day new
+    responders demeaned within day; fixed hyper-parameters, same training protocol as the ranker."""
+    name = "gbm"
+
+    def fit(self, train):
+        from sklearn.ensemble import HistGradientBoostingRegressor
+        X, y = [], []
+        for views, targets in train:
+            if len(views) < 2:
+                continue
+            T, Z = _rich(views)
+            tt = np.array([len(targets[t]) for t in T], float)
+            X += list(Z)
+            y += list(tt - tt.mean())
+        self.m = HistGradientBoostingRegressor(max_iter=200, learning_rate=0.05, max_leaf_nodes=15,
+                                               min_samples_leaf=10, random_state=0).fit(np.array(X), np.array(y))
+
+    def score(self, views):
+        T, Z = _rich(views)
+        return {t: float(p) for t, p in zip(T, self.m.predict(Z))}
+
+
+class RankAverage(Method):
+    """Mean of within-day ranks of two methods (an ensemble of a learned ranker and a capped count)."""
+
+    def __init__(self, a, b, name):
+        self.a, self.b, self.name = a, b, name
+
+    def calibrate(self, history):
+        self.a.calibrate(history); self.b.calibrate(history)
+
+    def fit(self, train):
+        self.a.fit(train); self.b.fit(train)
+
+    def score(self, views):
+        from scipy.stats import rankdata
+        T = list(views)
+        sa, sb = self.a.score(views), self.b.score(views)
+        ra, rb = rankdata([sa[t] for t in T]), rankdata([sb[t] for t in T])
+        return {t: float(x + y) / 2 for t, x, y in zip(T, ra, rb)}
+
+
+def extended_methods():
+    """Reference methods plus the candidate families added for the benchmark paper (2026-11-08)."""
+    return reference_methods() + [
+        Count("responders", lambda v: len(v.responders)),
+        Count("replies_cap2", lambda v: sum(min(k, 2) for k in v.responders.values())),
+        Count("established", lambda v: len(v.established)),
+        Count("history_only", lambda v: v.history_yield),
+        RandomPick(), Burst(), PerPostCap(), GBM(),
+        RankAverage(Ranker(), Capped("cross_anchored", ["A", "C"]), "ranker+cross")]
+
+
 # ---------------------------------------------------------------- attack simulation
 def _place(e, add, place):
     if add <= 0 or len(e) == 0:
@@ -307,12 +424,14 @@ def _place(e, add, place):
     return e
 
 
-def _attacked_views(S, d, T, kind, B, R, rng, state, victim_rule, place):
+def _attacked_views(S, d, T, kind, B, R, rng, state, victim_rule, place, cand=None):
     cells = S.cells
     low = sorted(T, key=lambda t: len(cells[(t, d)].T))[: max(1, len(T) // 2)]
     if victim_rule == "near":
         dsc = sorted(T, key=lambda t: (-len(cells[(t, d)].T), t))
         low = dsc[3:6] or dsc[-1:]
+    if cand is not None:
+        low = cand
     fake, fest, fids, victim = [], [], [], None
     if kind == "none":
         return None, {t: clean_view(cells[(t, d)]) for t in T}
@@ -344,6 +463,10 @@ def _attacked_views(S, d, T, kind, B, R, rng, state, victim_rule, place):
             if pool:
                 fids = list(rng.choice(pool, size=min(B, len(pool)), replace=False))
                 fest = [max(1, R // B)] * len(fids)
+    elif kind == "history":
+        if state.get("hist_victim") is None or (state["hist_victim"], d) not in cells:
+            state["hist_victim"] = low[rng.integers(len(low))]
+        victim = state["hist_victim"]
     elif kind == "pod":
         if state["pod_victim"] is None or (state["pod_victim"], d) not in cells:
             state["pod_victim"] = low[rng.integers(len(low))]
@@ -378,16 +501,44 @@ def _attacked_views(S, d, T, kind, B, R, rng, state, victim_rule, place):
     resp = Counter(c.resp)
     est = Counter(c.est)
     for i, k in enumerate(fake):
-        resp[("new", i)] += k
+        resp[("fake", i)] += k          # same ids as in conversational / answered
     for j, k in zip(fids, fest):
         resp[j] += k
         est[j] += k
-    e = _place(c.e, add, place)
-    if kind in ("post_flood", "post_reply", "all_sides", "all_staged"):
-        e = np.concatenate([e, np.zeros(B)])
+    has_posts = kind in ("post_flood", "post_reply", "all_sides", "all_staged")
+    if place == "own" and has_posts:
+        # adaptive placement: the attacker's replies go to its own fresh posts, spread evenly
+        q, r = divmod(int(add), B)
+        e = np.concatenate([c.e, q + (np.arange(B) < r).astype(float)])
+    else:
+        e = _place(c.e, add, "spread" if place == "own" else place)
+        if has_posts:
+            e = np.concatenate([e, np.zeros(B)])
     views = {t: clean_view(cells[(t, d)]) for t in T}
-    views[victim] = View(V, A, c.E + add, e, resp, conv, recv, recv_est, est, prev, c.hist_y)
+    hy = c.hist_y + (R if kind == "history" else 0)
+    views[victim] = View(V, A, c.E + add, e, resp, conv, recv, recv_est, est, prev, hy, c.hist_V, c.topic, c.day)
     return victim, views
+
+
+_ORACLE = {}
+
+
+def best_union(S, d, T, k):
+    """Exact best possible pick: the k topics whose next-day new responders have the largest union (cached)."""
+    key = (S.name, d, k)
+    if key not in _ORACLE:
+        from itertools import combinations
+        sets = [S.cells[(t, d)].T for t in T]
+        best = 0
+        order = sorted(range(len(sets)), key=lambda i: -len(sets[i]))
+        sizes = [len(sets[i]) for i in order]
+        for comb in combinations(range(len(order)), min(k, len(order))):
+            if sum(sizes[i] for i in comb) <= best:      # upper bound
+                continue
+            u = len(set().union(*[sets[order[i]] for i in comb]))
+            best = max(best, u)
+        _ORACLE[key] = best
+    return _ORACLE[key]
 
 
 def _train_set(settings, names):
@@ -400,9 +551,22 @@ def _train_set(settings, names):
     return out
 
 
-def evaluate(methods, settings, victim="low", place="top", attacks=None, draws=DRAWS, k=3):
-    """Returns {setting: {attack: {method: {"yield", "oracle", "days": {day: y}, "succ": share}}}}."""
+def evaluate(methods, settings, victim="low", place="top", attacks=None, draws=DRAWS, k=3, _cand=None):
+    """Returns {setting: {attack: {method: {"yield", "oracle", "days": {day: y}, "succ": share}}}}.
+    victim: 'low' (a lower-half topic by true yield), 'near' (true-yield rank 4-6) or 'boundary' (each method is
+    attacked separately at the topics it ranks k+1..k+3 on the clean day: targeting from observable scores)."""
     attacks = attacks or list(ATTACKS)
+    if victim == "boundary":
+        res = {}
+        for m in methods:
+            def fn(views, T, m=m):
+                sc = m.score(views)
+                return sorted(T, key=lambda t: (-sc[t], t))[k:k + 3]
+            r = evaluate([m], settings, "low", place, attacks, draws, k, _cand=fn)
+            for n in r:
+                for a in r[n]:
+                    res.setdefault(n, {}).setdefault(a, {}).update(r[n][a])
+        return res
     res = {}
     for n, S in settings.items():
         held = next((f for f in FOLDS if n in f), [])
@@ -417,6 +581,7 @@ def evaluate(methods, settings, victim="low", place="top", attacks=None, draws=D
             days = {m.name: {} for m in methods}
             succ = {m.name: [] for m in methods}
             ora = []
+            oday = {}
             for _ in range(1 if kind == "none" else draws):
                 state = {"pod_victim": None, "pod_ids": None, "pod_seen": set()}
                 tot = {m.name: 0 for m in methods}
@@ -425,8 +590,10 @@ def evaluate(methods, settings, victim="low", place="top", attacks=None, draws=D
                     T = [t for (t, dd) in S.cells if dd == d]
                     if not T:
                         continue
-                    vic, views = _attacked_views(S, d, T, kind, B, R, rng, state, victim, place)
-                    o += len(set().union(*[S.cells[(t, d)].T for t in sorted(T, key=lambda t: (-len(S.cells[(t, d)].T), t))[:k]]))
+                    cand = _cand(day_views(S, d), T) if _cand is not None else None
+                    vic, views = _attacked_views(S, d, T, kind, B, R, rng, state, victim, place, cand)
+                    o += best_union(S, d, T, k)
+                    oday[d] = best_union(S, d, T, k)
                     for m in methods:
                         sc = m.score(views)
                         sel = sorted(T, key=lambda t: (-sc[t], t))[:k]
@@ -438,7 +605,7 @@ def evaluate(methods, settings, victim="low", place="top", attacks=None, draws=D
                 for m in methods:
                     acc[m.name].append(tot[m.name])
                 ora.append(o)
-            res[n][a] = {m.name: {"yield": float(np.mean(acc[m.name])), "oracle": float(np.mean(ora)),
+            res[n][a] = {m.name: {"yield": float(np.mean(acc[m.name])), "oracle": float(np.mean(ora)), "oracle_days": oday,
                                   "days": {d: float(np.mean(v)) for d, v in days[m.name].items()},
                                   "succ": float(np.mean(succ[m.name])) if succ[m.name] else None} for m in methods}
     return res
@@ -460,12 +627,47 @@ def summarize(res, settings):
         for m in methods:
             part = [a for a in PARTIAL if a in res[names[0]]]
             allA = [a for a in ALL_ATTACKS if a in res[names[0]]]
+            histA = [a for a in HISTORY_ATTACKS if a in res[names[0]]]
             s1 = max((float(np.dot([res[n][a][m]["succ"] for n in names], w) / w.sum()), a) for a in part) if part else (None, None)
             out[g][m] = {"clean": round(pct(m, "clean"), 1),
                          "worst_partial": round(min(pct(m, a) for a in part), 1) if part else None,
                          "worst_all": round(min(pct(m, a) for a in allA), 1) if allA else None,
+                         "worst_history": round(min(pct(m, a) for a in histA), 1) if histA else None,
+                         "success_history": round(100 * max(float(np.dot([res[n][a][m]["succ"] for n in names], w) / w.sum()) for a in histA), 1) if histA else None,
                          "success_strongest_partial": round(100 * s1[0], 1) if s1[0] is not None else None,
                          "strongest_partial": s1[1]}
+    return out
+
+
+def bootstrap(res, settings, a, b, draws=2000, seed=20261108):
+    """Paired calendar-date bootstrap of method a minus method b, per tier: resample evaluation dates with
+    replacement; a sampled date brings every setting of the tier observed on it (shared shocks stay together).
+    Returns {tier: {stat: [point, lo, hi]}} for clean, worst_partial (A1-A11) and worst_all (A1-A13)."""
+    rng = np.random.default_rng(seed)
+    tiers = {}
+    for n, S in settings.items():
+        tiers.setdefault(S.tier, []).append(n)
+    out = {}
+    for g, names in tiers.items():
+        dates = sorted({d for n in names for d in res[n]["clean"][a]["days"]})
+        part = [x for x in PARTIAL if x in res[names[0]]]
+        allA = [x for x in ALL_ATTACKS if x in res[names[0]]]
+
+        def pct(m, att, sample):
+            num = sum(res[n][att][m]["days"].get(d, 0.0) for d in sample for n in names)
+            den = sum(res[n][att][m]["oracle_days"].get(d, 0) for d in sample for n in names)
+            return 100 * num / max(1, den)
+
+        def stats(sample):
+            r = {}
+            for key, atts in (("clean", ["clean"]), ("worst_partial", part), ("worst_all", allA)):
+                if atts:
+                    r[key] = min(pct(a, x, sample) for x in atts) - min(pct(b, x, sample) for x in atts)
+            return r
+        pt = stats(dates)
+        B = [stats(list(rng.choice(dates, len(dates)))) for _ in range(draws)]
+        out[g] = {k: [round(v, 1), round(float(np.quantile([x[k] for x in B], .025)), 1),
+                      round(float(np.quantile([x[k] for x in B], .975)), 1)] for k, v in pt.items()}
     return out
 
 
