@@ -400,7 +400,7 @@ def _train_set(settings, names):
     return out
 
 
-def evaluate(methods, settings, victim="low", place="top", attacks=None, draws=DRAWS):
+def evaluate(methods, settings, victim="low", place="top", attacks=None, draws=DRAWS, k=3):
     """Returns {setting: {attack: {method: {"yield", "oracle", "days": {day: y}, "succ": share}}}}."""
     attacks = attacks or list(ATTACKS)
     res = {}
@@ -426,10 +426,10 @@ def evaluate(methods, settings, victim="low", place="top", attacks=None, draws=D
                     if not T:
                         continue
                     vic, views = _attacked_views(S, d, T, kind, B, R, rng, state, victim, place)
-                    o += len(set().union(*[S.cells[(t, d)].T for t in sorted(T, key=lambda t: (-len(S.cells[(t, d)].T), t))[:3]]))
+                    o += len(set().union(*[S.cells[(t, d)].T for t in sorted(T, key=lambda t: (-len(S.cells[(t, d)].T), t))[:k]]))
                     for m in methods:
                         sc = m.score(views)
-                        sel = sorted(T, key=lambda t: (-sc[t], t))[:3]
+                        sel = sorted(T, key=lambda t: (-sc[t], t))[:k]
                         y = len(set().union(*[S.cells[(t, d)].T for t in sel]))
                         tot[m.name] += y
                         days[m.name].setdefault(d, []).append(y)
