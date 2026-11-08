@@ -1,0 +1,220 @@
+{
+ "summary": {
+  "dev": {
+   "replies": {
+    "clean": 92.6,
+    "worst_partial": 84.1,
+    "worst_all": 84.1,
+    "success_strongest_partial": 100.0,
+    "strongest_partial": "A9b_reply_to_replies_aged_B300_R450"
+   },
+   "posts": {
+    "clean": 76.7,
+    "worst_partial": 57.8,
+    "worst_all": 57.8,
+    "success_strongest_partial": 96.5,
+    "strongest_partial": "A11_post_and_reply_B300_R450"
+   },
+   "authors": {
+    "clean": 83.4,
+    "worst_partial": 71.3,
+    "worst_all": 71.3,
+    "success_strongest_partial": 100.0,
+    "strongest_partial": "A11_post_and_reply_B300_R450"
+   },
+   "conv_resp": {
+    "clean": 90.0,
+    "worst_partial": 79.6,
+    "worst_all": 79.6,
+    "success_strongest_partial": 100.0,
+    "strongest_partial": "A9b_reply_to_replies_aged_B300_R450"
+   },
+   "clip_conv": {
+    "clean": 92.7,
+    "worst_partial": 84.0,
+    "worst_all": 84.0,
+    "success_strongest_partial": 100.0,
+    "strongest_partial": "A9b_reply_to_replies_aged_B300_R450"
+   },
+   "cap_answered": {
+    "clean": 92.8,
+    "worst_partial": 84.3,
+    "worst_all": 84.2,
+    "success_strongest_partial": 100.0,
+    "strongest_partial": "A8_fake_conversation_B100_R200"
+   },
+   "cap_authors": {
+    "clean": 87.3,
+    "worst_partial": 77.5,
+    "worst_all": 77.5,
+    "success_strongest_partial": 100.0,
+    "strongest_partial": "A11_post_and_reply_B300_R450"
+   },
+   "cross_anchored": {
+    "clean": 87.3,
+    "worst_partial": 86.3,
+    "worst_all": 78.1,
+    "success_strongest_partial": 18.2,
+    "strongest_partial": "A11_post_and_reply_B300_R450"
+   },
+   "ranker": {
+    "clean": 94.2,
+    "worst_partial": 82.4,
+    "worst_all": 82.4,
+    "success_strongest_partial": 99.7,
+    "strongest_partial": "A1_reply_bomb_B5_R1000"
+   },
+   "gate": {
+    "clean": 87.8,
+    "worst_partial": 75.2,
+    "worst_all": 74.6,
+    "success_strongest_partial": 100.0,
+    "strongest_partial": "A11_post_and_reply_B300_R450"
+   }
+  },
+  "held": {
+   "replies": {
+    "clean": 86.5,
+    "worst_partial": 67.2,
+    "worst_all": 67.2,
+    "success_strongest_partial": 100.0,
+    "strongest_partial": "A9b_reply_to_replies_aged_B300_R450"
+   },
+   "posts": {
+    "clean": 84.4,
+    "worst_partial": 69.8,
+    "worst_all": 69.8,
+    "success_strongest_partial": 100.0,
+    "strongest_partial": "A11_post_and_reply_B300_R450"
+   },
+   "authors": {
+    "clean": 88.4,
+    "worst_partial": 74.0,
+    "worst_all": 74.0,
+    "success_strongest_partial": 100.0,
+    "strongest_partial": "A11_post_and_reply_B300_R450"
+   },
+   "conv_resp": {
+    "clean": 76.7,
+    "worst_partial": 64.6,
+    "worst_all": 64.3,
+    "success_strongest_partial": 100.0,
+    "strongest_partial": "A9b_reply_to_replies_aged_B300_R450"
+   },
+   "clip_conv": {
+    "clean": 85.4,
+    "worst_partial": 65.8,
+    "worst_all": 65.5,
+    "success_strongest_partial": 100.0,
+    "strongest_partial": "A9b_reply_to_replies_aged_B300_R450"
+   },
+   "cap_answered": {
+    "clean": 83.8,
+    "worst_partial": 66.5,
+    "worst_all": 65.7,
+    "success_strongest_partial": 100.0,
+    "strongest_partial": "A8_fake_conversation_B100_R200"
+   },
+   "cap_authors": {
+    "clean": 86.5,
+    "worst_partial": 71.6,
+    "worst_all": 71.6,
+    "success_strongest_partial": 100.0,
+    "strongest_partial": "A11_post_and_reply_B300_R450"
+   },
+   "cross_anchored": {
+    "clean": 84.5,
+    "worst_partial": 82.3,
+    "worst_all": 70.6,
+    "success_strongest_partial": 18.9,
+    "strongest_partial": "A8_fake_conversation_B100_R200"
+   },
+   "ranker": {
+    "clean": 84.3,
+    "worst_partial": 68.1,
+    "worst_all": 68.1,
+    "success_strongest_partial": 100.0,
+    "strongest_partial": "A7_brigade_B200_R400"
+   },
+   "gate": {
+    "clean": 79.6,
+    "worst_partial": 62.7,
+    "worst_all": 62.7,
+    "success_strongest_partial": 100.0,
+    "strongest_partial": "A7_brigade_B200_R400"
+   }
+  },
+  "test": {
+   "replies": {
+    "clean": 83.3,
+    "worst_partial": 70.3,
+    "worst_all": 70.3,
+    "success_strongest_partial": 100.0,
+    "strongest_partial": "A9b_reply_to_replies_aged_B300_R450"
+   },
+   "posts": {
+    "clean": 81.8,
+    "worst_partial": 70.2,
+    "worst_all": 70.2,
+    "success_strongest_partial": 100.0,
+    "strongest_partial": "A11_post_and_reply_B300_R450"
+   },
+   "authors": {
+    "clean": 82.1,
+    "worst_partial": 71.1,
+    "worst_all": 71.1,
+    "success_strongest_partial": 100.0,
+    "strongest_partial": "A11_post_and_reply_B300_R450"
+   },
+   "conv_resp": {
+    "clean": 79.7,
+    "worst_partial": 65.6,
+    "worst_all": 65.4,
+    "success_strongest_partial": 100.0,
+    "strongest_partial": "A9b_reply_to_replies_aged_B300_R450"
+   },
+   "clip_conv": {
+    "clean": 83.3,
+    "worst_partial": 71.3,
+    "worst_all": 71.3,
+    "success_strongest_partial": 100.0,
+    "strongest_partial": "A9b_reply_to_replies_aged_B300_R450"
+   },
+   "cap_answered": {
+    "clean": 81.0,
+    "worst_partial": 71.5,
+    "worst_all": 71.3,
+    "success_strongest_partial": 100.0,
+    "strongest_partial": "A8_fake_conversation_B100_R200"
+   },
+   "cap_authors": {
+    "clean": 83.5,
+    "worst_partial": 72.2,
+    "worst_all": 72.2,
+    "success_strongest_partial": 100.0,
+    "strongest_partial": "A11_post_and_reply_B300_R450"
+   },
+   "cross_anchored": {
+    "clean": 81.0,
+    "worst_partial": 79.9,
+    "worst_all": 71.0,
+    "success_strongest_partial": 18.3,
+    "strongest_partial": "A8_fake_conversation_B100_R200"
+   },
+   "ranker": {
+    "clean": 90.1,
+    "worst_partial": 78.2,
+    "worst_all": 78.2,
+    "success_strongest_partial": 100.0,
+    "strongest_partial": "A9b_reply_to_replies_aged_B300_R450"
+   },
+   "gate": {
+    "clean": 89.5,
+    "worst_partial": 78.7,
+    "worst_all": 78.7,
+    "success_strongest_partial": 100.0,
+    "strongest_partial": "A9b_reply_to_replies_aged_B300_R450"
+   }
+  }
+ }
+}
