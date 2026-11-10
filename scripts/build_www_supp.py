@@ -108,8 +108,8 @@ def main():
 
 README = """# Supplementary material
 
-Anonymous supplementary material for the paper "The Reports Nobody Replies To: Prolific Producers in Event and
-Discussion Monitoring". Posts are public Bluesky posts; this package contains no post text, no URIs and no account
+Anonymous supplementary material for the paper "What Gets Counted Gets Found: The Diverging Signals of Events and
+Engagement". Posts are public Bluesky posts; this package contains no post text, no URIs and no account
 identifiers (accounts are salted hashes; a public handle is kept only for accounts profiled as news, organisation or
 security-feed accounts).
 
